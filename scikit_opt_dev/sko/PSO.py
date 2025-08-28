@@ -8,6 +8,7 @@ from .base import SkoBase
 from .DecisionVar import *
 import subprocess
 import time
+import os
 
 class PSO(SkoBase):
     """
@@ -152,9 +153,7 @@ class PSO(SkoBase):
         """
 
         job_ids = []
-        results = [None] * self.pop
-
-        # Submit jobs
+        results = [0] * self.pop
         for idx, x in enumerate(self.X):
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
@@ -164,41 +163,27 @@ class PSO(SkoBase):
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            # stdout, stderr = proc.communicate()
-            # print(stderr)
-            # print(stdout, type(stdout))
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+            stdout, _ = proc.communicate()
+            print(stdout)
             
-            # Bad idea because sbatch might take longer than 5s to initiate
-            # and you are using global storage with has network latency
-            time.sleep(5)  
-            
-            job_id = None
-            with open("job_ids.txt", "r") as f:
-                job_id = f.read()   
-                print(job_id)
-            job_ids.append(job_id)
-            
-            # job_id = None
-            # for line in proc.stdout: #or proc.stdout.readlines():
-            #     print(line.strip())
-            #     if "Submitted batch job" in line:
-            #         job_id = line.strip().split()[-1]
-            #         break
-            # job_ids.append(job_id)
+            job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+            job_ids.append(int(job_id))
            
-        exit(1)  
-        # Wait for jobs to finish and collect results
+        
+        print("Current working directory:", os.getcwd())
+        # Fix
         pending = set(range(self.pop))
-
+        # Gotta optimize these parts
         while pending:
             for idx in list(pending):
                 job_id = job_ids[idx]
-                out_file = f"job_{job_id}.out"
+                out_file = f"./job_{job_id}.out"
                 try:
                     with open(out_file, "r") as f:
+                        print(f"Reading output file {out_file}...")
                         output = f.read()
-                        if "Job ended" in output:
+                        if "job ended" in output:
                             lines = output.strip().splitlines()
                             for line in reversed(lines):
                                 try:
@@ -209,8 +194,11 @@ class PSO(SkoBase):
                                     continue
                             pending.remove(idx)
                 except FileNotFoundError:
+                    print(f"Output file {out_file} not found yet.")
                     pass  # Output file not yet created
             time.sleep(2)
+        
+        print("All particle jobs finished.")
         
         # TODO: collect results from the jobs
         self.Y = np.array(results)  # Assuming results are already in the correct shape
@@ -236,7 +224,7 @@ class PSO(SkoBase):
         '''
         idx_min = self.pbest_y.argmin()
         if self.gbest_y > self.pbest_y[idx_min]:
-            self.gbest_x = self.X[idx_min].copy()
+            self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]
 
     def recorder(self):

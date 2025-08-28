@@ -52,8 +52,8 @@ Methods/vars to be implemented:
 """
 class DecisionVar:
     n_dim = 4
-    lb = np.array([10, 5.0, 0, 0.01])
-    ub = np.array([500, 100.0, len(KernelType) - 1, 50.0])
+    lb = np.array([10, 5.0, 0, 0.05])
+    ub = np.array([500, 100.0, len(KernelType) - 1, 10.0])
         
     @staticmethod
     def random():
