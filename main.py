@@ -12,7 +12,7 @@ exec_trace_addr = args.exec_trace_addr[0].resolve()
 output_dir = os.path.abspath(args.output_dir)
 os.makedirs(output_dir, exist_ok=True)
 print(f"Execution trace address: {exec_trace_addr}")
-print(f"Output directory: {output_dir}")
+print(f"Output directory: {output_dir}\n\n")
 
 # exec_trace_addr is the input directory
 # output_dir is the output directory

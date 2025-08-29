@@ -152,6 +152,7 @@ class PSO(SkoBase):
         Wait for all jobs to finish and collect their output as the fitness value.
         """
 
+        processes = []
         job_ids = []
         results = [0] * self.pop
         for idx, x in enumerate(self.X):
@@ -164,43 +165,63 @@ class PSO(SkoBase):
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
-            stdout, _ = proc.communicate()
-            print(stdout)
-            
+            processes.append(proc)
+            stdout = proc.stdout.readline()
             job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_ids.append(int(job_id))
+            
+            # To read and print stdout and stderr in real-time (but can be blocking on stdout/stderr.readline())
+            # output = ""
+            # error = ""
+            # while proc.poll() is None:
+            #     stdout = proc.stdout.readline()
+            #     print(stdout.strip())
+            #     output += stdout
+            #     stderr = proc.stderr.readline()
+            #     print(stderr.strip())
+            #     error += stderr
+            
+            # Old way to read stdout and stderr after process ends (if sbatch returns right after sumbission)
+            # stdout, _ = proc.communicate()
+            # print(stdout)
+            # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+            # job_ids.append(int(job_id))
            
+        print("Job IDs:", job_ids)
+        # print("Current working directory:", os.getcwd())
+        # print("Files in current directory:", os.listdir(os.getcwd()), "\n")
         
-        print("Current working directory:", os.getcwd())
-        # Fix
-        pending = set(range(self.pop))
-        # Gotta optimize these parts
+        # Check if all jobs are finished by checking their output files
+        pending = list(range(self.pop))
         while pending:
-            for idx in list(pending):
-                job_id = job_ids[idx]
-                out_file = f"./job_{job_id}.out"
-                try:
-                    with open(out_file, "r") as f:
-                        print(f"Reading output file {out_file}...")
-                        output = f.read()
-                        if "job ended" in output:
-                            lines = output.strip().splitlines()
-                            for line in reversed(lines):
-                                try:
-                                    val = float(line)
-                                    results[idx] = val
-                                    break
-                                except ValueError:
-                                    continue
-                            pending.remove(idx)
-                except FileNotFoundError:
-                    print(f"Output file {out_file} not found yet.")
-                    pass  # Output file not yet created
-            time.sleep(2)
+            for idx in pending:
+                if processes[idx].poll() is not None:  # Process finished
+                    out_file = f"./job_{job_ids[idx]}.out"
+                    try:
+                        with open(out_file, "r") as f:
+                            print(f"Reading output file {out_file}...")
+                            output = f.read()
+                            if "job ended" in output:
+                                lines = output.strip().splitlines()
+                                for line in reversed(lines):
+                                    try:
+                                        val = float(line)
+                                        results[idx] = val
+                                        break
+                                    except ValueError:
+                                        continue
+                                pending.remove(idx)
+                    except FileNotFoundError:
+                        print(f"Output file {out_file} not found yet.")
+                        raise FileNotFoundError(f"Output file {out_file} not found.")
+                else:
+                    time.sleep(10)
+            
         
         print("All particle jobs finished.")
+        print("Collecting results...")
         
-        # TODO: collect results from the jobs
+        # TODO: collect results from the jobs, or maybe just the output of the 
         self.Y = np.array(results)  # Assuming results are already in the correct shape
         return self.Y
     
@@ -268,31 +289,3 @@ class PSO(SkoBase):
         return self.best_x, self.best_y
 
     fit_distributed = run_distributed
-
-
-
-
-
-
-
-
-
-# # Wait for jobs to finish and collect results
-#         for idx, job_id in enumerate(job_ids):
-#             # Poll for job completion
-#             while True:
-#                 check_cmd = ["sacct", "-j", job_id, "--format=State", "--noheader"]
-#                 check_proc = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-#                 state = check_proc.stdout.strip()
-#                 if "COMPLETED" in state or "FAILED" in state or "CANCELLED" in state:
-#                     break
-#                 time.sleep(2)  # Wait before polling again
-
-#             # Assume output is written to a file named "slurm-{job_id}.out"
-#             out_file = f"slurm-{job_id}.out"
-#             try:
-#                 with open(out_file, "r") as f:
-#                     output = f.read().strip()
-#                     results[idx] = float(output)
-#             except Exception:
-#                 results[idx] = -1  
