@@ -7,12 +7,12 @@
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait
-#SBATCHhhhh --unbuffered
+
+# use sbatch --unbuffered to get the outputs in real-time (but it will bread the Pipeline)
 
 # Disable Python output buffering to ensure real-time logging
 export PYTHONUNBUFFERED=TRUE
 
-# commands
 echo "Particle job started at: $(date)"
 
 # Construct the uv command arguments
@@ -33,25 +33,28 @@ uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$file_addr") --base-d
 deactivate
 
 # Automata Learning
-module load java/17.0.6
+module load java/21.0.1
+hpm_executable=build/distributions/heat-pump-mining-0.0.0-14-ad1ef39-SNAPSHOT/
 EventTracePath="$TMPDIR/CPD_Analysis_Outputs/event_traces.zip"
+cp "$EventTracePath" "./CPD_Analysis_Outputs/event_traces_${SLURM_JOB_ID}.zip"
 
-#./gradlew application => NO. distZip
-# unpack the zip and get all the executables (ls build)
 cd ../../hpm_automata_learning/heat-pump-mining/
+exec_path=build/distributions/heat-pump-mining-0.0.0-14-ad1ef39-SNAPSHOT/bin/heat-pump-mining
 echo "The actual script started running at: $(date)"
 echo "Starting convert-format..."
-./gradlew run --args "convert-format -i \"$EventTracePath\" -o \"$TMPDIR/nibe.json.zst\""
+$exec_path convert-format -i $EventTracePath -o "$TMPDIR/nibe.json.zst"
 echo "Starting select-and-merge..."
-./gradlew run --args "select-and-merge -i \"$TMPDIR/nibe.json.zst\" -o \"$TMPDIR/filtered.json.zst\" -e defrost baud_rate -s defrost -a"
+# $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e defrost baud_rate -s defrost -a
+$exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e flow_temperature return_flow_temperature hc_zone1 set_flow_zone_1 -s set_flow_zone_1 -a
 echo "Starting learn..."
-./gradlew run --args "learn -i \"$TMPDIR/filtered.json.zst\" -o \"$TMPDIR/nibe.dot\""
+$exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot"
 echo "Starting validate..."
-./gradlew run --args "validate -a \"$TMPDIR/nibe.dot\" -i \"$TMPDIR/filtered.json.zst\""
+$exec_path validate -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst"
 
 #
-# TODO: Process the output
-# Get the output of "validate" and calculate the sum (or mean) of scores and output the results
+# TODO: Find a way to copy only the event trace of the best result
+# but you have to call it one more time cause that one is decided at the very end
+#
 
 # Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
 # it must copy to the parent process's ./outputs, must come to this script as an input argument)

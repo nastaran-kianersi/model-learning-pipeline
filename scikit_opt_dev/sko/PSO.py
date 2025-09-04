@@ -10,6 +10,58 @@ import subprocess
 import time
 import os
 
+import csv
+import re
+from pathlib import Path
+
+
+HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
+REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
+
+def sum_revision_scores(path):
+    total = 0.0
+    count = 0
+    in_table = False
+    rev_idx = None
+
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not in_table:
+                if HEADER_RE.search(line):
+                    # parse header to find the revision score column index
+                    header = next(csv.reader([line]))
+                    header = [h.strip() for h in header]
+                    for i, h in enumerate(header):
+                        if REV_COL_RE.match(h):
+                            rev_idx = i
+                            break
+                    if rev_idx is None:
+                        raise RuntimeError("Could not find REVISION-SCORE(S) column in header")
+                    in_table = True
+                # else: keep skipping lines until we hit the header
+                continue
+
+            # end of table heuristics: stop if we hit a blank line or a non-CSV-ish line
+            if not line.strip() or ',' not in line:
+                break
+
+            row = next(csv.reader([line]))
+            if len(row) <= rev_idx:
+                break
+
+            cell = row[rev_idx].strip()
+            # strip any stray characters (e.g., percentages) and convert to float
+            try:
+                val = float(cell)
+            except ValueError:
+                val = float(re.sub(r'[^0-9eE+\-\.]', '', cell))
+
+            total += val
+            count += 1
+
+    return total, count
+
+
 class PSO(SkoBase):
     """
     Do PSO (Particle swarm optimization) algorithm.
@@ -151,7 +203,7 @@ class PSO(SkoBase):
         passing the variables in self.X as command-line arguments.
         Wait for all jobs to finish and collect their output as the fitness value.
         """
-
+        
         processes = []
         job_ids = []
         results = [0] * self.pop
@@ -159,16 +211,25 @@ class PSO(SkoBase):
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
             cmd = ["sbatch", self.jobscript_addr, str(self.exec_trace_addr)] + args  # Also give output_dir to hpm_job_pso to copy output files to that directory.
-            print("Submitting job with command:", ' '.join(cmd))
+            print("Submitting job with args: ", ' '.join(args))
             
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
             processes.append(proc)
+            
             stdout = proc.stdout.readline()
             job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_ids.append(int(job_id))
+            
+            # Doesn't necessarily have to be this complex, and it doesn't work (nor does the old method) work with #SBATCH --unbuffered
+            # while True:
+            #     stdout = proc.stdout.readline()
+            #     if stdout.strip().startswith("Submitted batch job"):
+            #         job_id = stdout.strip().split()[-1]
+            #         job_ids.append(int(job_id))
+            #         break
             
             # To read and print stdout and stderr in real-time (but can be blocking on stdout/stderr.readline())
             # output = ""
@@ -192,37 +253,20 @@ class PSO(SkoBase):
         # print("Files in current directory:", os.listdir(os.getcwd()), "\n")
         
         # Check if all jobs are finished by checking their output files
+        # If so, collect the results from the output files
         pending = list(range(self.pop))
         while pending:
             for idx in pending:
                 if processes[idx].poll() is not None:  # Process finished
                     out_file = f"./job_{job_ids[idx]}.out"
-                    try:
-                        with open(out_file, "r") as f:
-                            print(f"Reading output file {out_file}...")
-                            output = f.read()
-                            if "job ended" in output:
-                                lines = output.strip().splitlines()
-                                for line in reversed(lines):
-                                    try:
-                                        val = float(line)
-                                        results[idx] = val
-                                        break
-                                    except ValueError:
-                                        continue
-                                pending.remove(idx)
-                    except FileNotFoundError:
-                        print(f"Output file {out_file} not found yet.")
-                        raise FileNotFoundError(f"Output file {out_file} not found.")
+                    total, n = sum_revision_scores(out_file)
+                    print(f"Particle {idx} --- Rows: {n}, Sum(REVISION-SCORE[S]): {total}")
+                    pending.remove(idx)
+                    results[idx] = -total # if n > 0 else float('inf')  # Minimize negative score (maximize score)
                 else:
                     time.sleep(10)
             
-        
-        print("All particle jobs finished.")
-        print("Collecting results...")
-        
-        # TODO: collect results from the jobs, or maybe just the output of the 
-        self.Y = np.array(results)  # Assuming results are already in the correct shape
+        self.Y = np.array(results)  
         return self.Y
     
     def update_pbest(self):
@@ -265,6 +309,7 @@ class PSO(SkoBase):
         '''
         c = 0
         for iter_num in range(self.max_iter):
+            print("Iter ", iter_num)
             self.update_V()
             self.recorder()
             self.update_X()

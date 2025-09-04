@@ -19,7 +19,7 @@ print(f"Output directory: {output_dir}\n\n")
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, output_dir=output_dir,
-          jobscript_addr='./hpm_job_pso.sh', pop=10, max_iter=4)
+          jobscript_addr='./hpm_job_pso.sh', pop=30, max_iter=15)
 best_x, best_y = pso.run_distributed()
 print("Best solution:", best_x)
 print("Best objective value:", best_y)
