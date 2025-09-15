@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # @Time    : 2019/8/20
-# @Author  : github.com/guofei9987
+# @Author  : github.com/guofei9987 - Modified by Nastaran Kianersi
 
+import matplotlib.pyplot as plt
 import numpy as np
 from .base import SkoBase
 from .DecisionVar import *
@@ -13,6 +14,7 @@ import os
 import csv
 import re
 from pathlib import Path
+from datetime import datetime
 
 
 HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
@@ -142,9 +144,14 @@ class PSO(SkoBase):
         self.exec_trace_addr = exec_trace_addr
         self.output_dir = output_dir
         self.jobscript_addr = jobscript_addr
+        dt_str = datetime.now().strftime("run_%Y-%m-%d_at_%H-%M-%S")
+        self.save_dir = os.path.join(self.output_dir, dt_str)
+        os.makedirs(self.save_dir, exist_ok=True)
         
         self.X = np.array([DecisionVar.random() for _ in range(pop)])
         self.n_dim = DecisionVar.n_dim  
+        self.X_hist = np.empty(dtype=DecisionVar, shape=(max_iter, pop)) # for plotting
+        self.Y_hist = np.empty(dtype=float, shape=(max_iter, pop))       # for plotting
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
@@ -167,7 +174,7 @@ class PSO(SkoBase):
         self.pbest_y = np.array([np.inf] * pop)  # best image of every particle in history
         self.gbest_x = DecisionVarMean(self.pbest_x)  # global best location for all particles
         self.gbest_y = np.inf  # global best y for all particles
-        self.gbest_y_hist = []  # gbest_y of every iteration
+        self.gbest_y_hist = []  # gbest_y of every iteration - not used
         self.update_gbest()
 
         # record verbose values
@@ -211,7 +218,6 @@ class PSO(SkoBase):
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
             cmd = ["sbatch", self.jobscript_addr, str(self.exec_trace_addr)] + args  # Also give output_dir to hpm_job_pso to copy output files to that directory.
-            print("Submitting job with args: ", ' '.join(args))
             
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
@@ -222,6 +228,7 @@ class PSO(SkoBase):
             stdout = proc.stdout.readline()
             job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_ids.append(int(job_id))
+            print("Submitting job", job_id, "with args: ", ' '.join(args))
             
             # Doesn't necessarily have to be this complex, and it doesn't work (nor does the old method) work with #SBATCH --unbuffered
             # while True:
@@ -260,7 +267,7 @@ class PSO(SkoBase):
                 if processes[idx].poll() is not None:  # Process finished
                     out_file = f"./job_{job_ids[idx]}.out"
                     total, n = sum_revision_scores(out_file)
-                    print(f"Particle {idx} --- Rows: {n}, Sum(REVISION-SCORE[S]): {total}")
+                    print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Sum(REVISION-SCORE[S]): {-total}")
                     pending.remove(idx)
                     results[idx] = -total # if n > 0 else float('inf')  # Minimize negative score (maximize score)
                 else:
@@ -268,6 +275,12 @@ class PSO(SkoBase):
             
         self.Y = np.array(results)  
         return self.Y
+    
+    
+    # TODO: submit a job that runs particle_job with the best parameters found
+    # and saves the traces and the learned model to output_dir
+    def run_for_xbest():
+        pass
     
     def update_pbest(self):
         '''
@@ -300,7 +313,7 @@ class PSO(SkoBase):
         self.record_value['Y'].append(self.Y)
     
     # finds the global miminum, so define the function such that it returns the negative of accuray
-    def run_distributed(self, precision=None, N=20):
+    def optimize_distributed(self, precision=None, N=20):
         '''
         precision: None or float
             If precision is None, it will run the number of max_iter steps
@@ -330,7 +343,81 @@ class PSO(SkoBase):
                 print('Iter: {}, Best fit: {} at {}'.format(iter_num, self.gbest_y, self.gbest_x))
 
             self.gbest_y_hist.append(self.gbest_y)
+            self.Y_hist[iter_num] = self.Y.copy()
+            self.X_hist[iter_num] = self.X.copy()
+            
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
         return self.best_x, self.best_y
+    
+    def plot_particle_evolution(self):
+        """
+        For each particle, plot the evolution of each DecisionVar field over iterations.
+        Each particle gets its own figure with four subplots (one per parameter).
+        Plots are saved to save_dir.
+        """
+        
+        save_dir = os.path.join(self.save_dir, "individual_particle_evolution")
+        os.makedirs(save_dir, exist_ok=True)
+        fields = list(vars(self.X[0]).keys())
 
-    fit_distributed = run_distributed
+        for i in range(self.pop):
+            fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+            axs = axs.flatten()
+            for j, field in enumerate(fields):
+                y_vals = [getattr(self.X_hist[k, i], field) for k in range(self.max_iter)]
+                axs[j].plot(range(self.max_iter), y_vals, marker='o')
+                axs[j].set_title(f'{field} (Particle {i+1})')
+                axs[j].set_xlabel('Iteration')
+                axs[j].set_ylabel(field)
+                axs[j].grid()
+            plt.tight_layout()
+            plt.suptitle(f'Particle {i+1} Parameter Evolution', y=1.02)
+            plt.savefig(os.path.join(save_dir, f'particle_{i+1}_evolution.png'), bbox_inches='tight')
+            plt.close(fig)
+            
+    def plot_particle_scatter(self):
+        """
+        For each iteration, plot a scatter plot of all particles for each DecisionVar field.
+        Each iteration gets its own figure with four subplots (one per parameter).
+        Plots are saved to save_dir.
+        """
+        
+        save_dir = os.path.join(self.save_dir, "particle_scatterplots")
+        os.makedirs(save_dir, exist_ok=True)
+        fields = list(vars(self.X[0]).keys())
+
+        for iter_num in range(self.max_iter):
+            fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+            axs = axs.flatten()
+            for j, field in enumerate(fields):
+                values = [getattr(self.X_hist[iter_num, i], field) for i in range(self.pop)]
+                axs[j].scatter(range(1, self.pop + 1), values, c='b', alpha=0.7)
+                axs[j].set_title(f'{field} (Iteration {iter_num + 1})')
+                axs[j].set_xlabel('Particle')
+                axs[j].set_ylabel(field)
+                axs[j].grid()
+            plt.tight_layout()
+            plt.suptitle(f'Particle Parameter Scatter (Iteration {iter_num + 1})', y=1.02)
+            plt.savefig(os.path.join(save_dir, f'iteration_{iter_num + 1}_scatter.png'), bbox_inches='tight')
+            plt.close(fig)
+    
+    def plot_gbest_y_hist(self):
+        """
+        Plot gbest_y_hist which is the best y value among all particles in each iteration.
+        """
+
+        _, ax = plt.subplots(figsize=(12, 8))
+        plt.plot(self.gbest_y_hist, color='darkblue', linewidth=1.5)
+        ax.set_title(f'Best Global y Value', pad=15) 
+        ax.set_xlabel('Iter', labelpad=10)
+        ax.set_ylabel('gbest_gloal', labelpad=10)
+        ax.tick_params(axis='both', which='major')
+        
+        figure_name = f'{self.save_dir}/gbest_y_hist.png'
+        plt.savefig(figure_name)
+        plt.close()
+        
+    def visualize(self):
+        self.plot_particle_evolution()
+        self.plot_particle_scatter()
+        self.plot_gbest_y_hist()

@@ -51,11 +51,6 @@ $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot"
 echo "Starting validate..."
 $exec_path validate -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst"
 
-#
-# TODO: Find a way to copy only the event trace of the best result
-# but you have to call it one more time cause that one is decided at the very end
-#
-
 # Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
 # it must copy to the parent process's ./outputs, must come to this script as an input argument)
 # cp -r "$TMPDIR/CPD_Analysis_Outputs/" ./outputs/

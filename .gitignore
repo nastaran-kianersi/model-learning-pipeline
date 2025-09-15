@@ -1,0 +1,5 @@
+**/*.zip
+**/*.err
+**/*.out
+/job_scripts/
+**/*.pyc
