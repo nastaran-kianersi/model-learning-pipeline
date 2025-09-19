@@ -2,4 +2,7 @@
 **/*.err
 **/*.out
 /job_scripts/
+/outputs/
+figures/
+jobscript.sh
 **/*.pyc

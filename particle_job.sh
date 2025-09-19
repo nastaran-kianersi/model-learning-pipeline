@@ -2,8 +2,6 @@
 #SBATCH -c 1
 #SBATCH --mem=16G
 #SBATCH -t 0-00:45:00
-#SBATCH --output=job_%A.out
-#SBATCH --error=job_%A.err
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait

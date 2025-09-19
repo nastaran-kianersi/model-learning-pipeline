@@ -15,12 +15,13 @@ import csv
 import re
 from pathlib import Path
 from datetime import datetime
+import traceback
 
 
 HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
 REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
 
-def sum_revision_scores(path):
+def avg_revision_scores(path):
     total = 0.0
     count = 0
     in_table = False
@@ -61,7 +62,7 @@ def sum_revision_scores(path):
             total += val
             count += 1
 
-    return total, count
+    return total/count, count
 
 
 class PSO(SkoBase):
@@ -147,6 +148,7 @@ class PSO(SkoBase):
         dt_str = datetime.now().strftime("run_%Y-%m-%d_at_%H-%M-%S")
         self.save_dir = os.path.join(self.output_dir, dt_str)
         os.makedirs(self.save_dir, exist_ok=True)
+        self.iter_num = 0
         
         self.X = np.array([DecisionVar.random() for _ in range(pop)])
         self.n_dim = DecisionVar.n_dim  
@@ -211,43 +213,29 @@ class PSO(SkoBase):
         Wait for all jobs to finish and collect their output as the fitness value.
         """
         
+        job_out_file_dir = str(os.path.join(self.save_dir, f'Iter_{self.iter_num}', ''))
+        os.makedirs(job_out_file_dir, exist_ok=True)
         processes = []
         job_ids = []
         results = [0] * self.pop
+        
         for idx, x in enumerate(self.X):
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
-            cmd = ["sbatch", self.jobscript_addr, str(self.exec_trace_addr)] + args  # Also give output_dir to hpm_job_pso to copy output files to that directory.
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, self.jobscript_addr, str(self.exec_trace_addr)] + args
             
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+            cmd = ["sbatch", "./jobscript.sh", str(self.exec_trace_addr)] + args 
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
             processes.append(proc)
             
             stdout = proc.stdout.readline()
             job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_ids.append(int(job_id))
             print("Submitting job", job_id, "with args: ", ' '.join(args))
-            
-            # Doesn't necessarily have to be this complex, and it doesn't work (nor does the old method) work with #SBATCH --unbuffered
-            # while True:
-            #     stdout = proc.stdout.readline()
-            #     if stdout.strip().startswith("Submitted batch job"):
-            #         job_id = stdout.strip().split()[-1]
-            #         job_ids.append(int(job_id))
-            #         break
-            
-            # To read and print stdout and stderr in real-time (but can be blocking on stdout/stderr.readline())
-            # output = ""
-            # error = ""
-            # while proc.poll() is None:
-            #     stdout = proc.stdout.readline()
-            #     print(stdout.strip())
-            #     output += stdout
-            #     stderr = proc.stderr.readline()
-            #     print(stderr.strip())
-            #     error += stderr
             
             # Old way to read stdout and stderr after process ends (if sbatch returns right after sumbission)
             # stdout, _ = proc.communicate()
@@ -256,22 +244,20 @@ class PSO(SkoBase):
             # job_ids.append(int(job_id))
            
         print("Job IDs:", job_ids)
-        # print("Current working directory:", os.getcwd())
-        # print("Files in current directory:", os.listdir(os.getcwd()), "\n")
         
-        # Check if all jobs are finished by checking their output files
-        # If so, collect the results from the output files
+        # Check for finished jobs by checking their output files
+        # Collect the results from each output file when it finished
         pending = list(range(self.pop))
         while pending:
             for idx in pending:
                 if processes[idx].poll() is not None:  # Process finished
-                    out_file = f"./job_{job_ids[idx]}.out"
-                    total, n = sum_revision_scores(out_file)
-                    print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Sum(REVISION-SCORE[S]): {-total}")
+                    out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx]}.out")
+                    avg, n = avg_revision_scores(out_file)
+                    print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
                     pending.remove(idx)
-                    results[idx] = -total # if n > 0 else float('inf')  # Minimize negative score (maximize score)
+                    results[idx] = -avg # if n > 0 else float('inf')  # Minimize negative score (maximize score)
                 else:
-                    time.sleep(10)
+                    time.sleep(5)
             
         self.Y = np.array(results)  
         return self.Y
@@ -322,6 +308,7 @@ class PSO(SkoBase):
         '''
         c = 0
         for iter_num in range(self.max_iter):
+            self.iter_num = iter_num
             print("Iter ", iter_num)
             self.update_V()
             self.recorder()
@@ -349,73 +336,99 @@ class PSO(SkoBase):
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
         return self.best_x, self.best_y
     
+    # TODO: add convergence analysis: a simple functions that uses a couple of methods
+    # to see if we've converged
+    
     def plot_particle_evolution(self):
         """
         For each particle, plot the evolution of each DecisionVar field over iterations.
         Each particle gets its own figure with four subplots (one per parameter).
         Plots are saved to save_dir.
         """
-        
-        save_dir = os.path.join(self.save_dir, "individual_particle_evolution")
-        os.makedirs(save_dir, exist_ok=True)
-        fields = list(vars(self.X[0]).keys())
+        try:
+            save_dir = os.path.join(self.save_dir, "individual_particle_evolution")
+            os.makedirs(save_dir, exist_ok=True)
+            fields = list(vars(self.X[0]).keys())
+            fields.append('metric')
 
-        for i in range(self.pop):
-            fig, axs = plt.subplots(2, 2, figsize=(12, 8))
-            axs = axs.flatten()
-            for j, field in enumerate(fields):
-                y_vals = [getattr(self.X_hist[k, i], field) for k in range(self.max_iter)]
-                axs[j].plot(range(self.max_iter), y_vals, marker='o')
-                axs[j].set_title(f'{field} (Particle {i+1})')
-                axs[j].set_xlabel('Iteration')
-                axs[j].set_ylabel(field)
-                axs[j].grid()
-            plt.tight_layout()
-            plt.suptitle(f'Particle {i+1} Parameter Evolution', y=1.02)
-            plt.savefig(os.path.join(save_dir, f'particle_{i+1}_evolution.png'), bbox_inches='tight')
-            plt.close(fig)
-            
+            for i in range(self.pop):
+                fig, axs = plt.subplots(len(fields), 1, figsize=(8, 20))
+                axs = axs.flatten()
+                for j, field in enumerate(fields):
+                    if field == 'metric':
+                        y_vals = self.Y_hist[:, i]
+                    elif field == 'kernel':
+                        y_vals = [getattr(self.X_hist[k, i], field).value for k in range(self.max_iter)]
+                    else:
+                        y_vals = [getattr(self.X_hist[k, i], field) for k in range(self.max_iter)]
+
+                    axs[j].plot(range(self.max_iter), y_vals, marker='o')
+                    axs[j].set_title(f'{field} (Particle {i})')
+                    axs[j].set_xlabel('Iteration')
+                    axs[j].set_ylabel(field)
+                    axs[j].grid()
+                plt.tight_layout()
+                plt.suptitle(f'Particle {i} Parameter Evolution', y=1.02)
+                plt.savefig(os.path.join(save_dir, f'particle_{i}_evolution.png'), bbox_inches='tight')
+                plt.close(fig)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"Error plotting particle evolution: {e}")
+           
     def plot_particle_scatter(self):
         """
         For each iteration, plot a scatter plot of all particles for each DecisionVar field.
         Each iteration gets its own figure with four subplots (one per parameter).
         Plots are saved to save_dir.
         """
-        
-        save_dir = os.path.join(self.save_dir, "particle_scatterplots")
-        os.makedirs(save_dir, exist_ok=True)
-        fields = list(vars(self.X[0]).keys())
+        try:
+            save_dir = os.path.join(self.save_dir, "particle_scatterplots")
+            os.makedirs(save_dir, exist_ok=True)
+            fields = list(vars(self.X[0]).keys()) # Y value
+            fields.append('metric')
+            
+            for iter_num in range(self.max_iter):
+                fig, axs = plt.subplots(len(fields), 1, figsize=(8, 20))
+                axs = axs.flatten()
+                for j, field in enumerate(fields):
+                    if field == 'metric':
+                        values = self.Y_hist[iter_num, :]
+                    elif field == 'kernel':
+                        values = [getattr(self.X_hist[iter_num, i], field).value for i in range(self.pop)]
+                    else:
+                        values = [getattr(self.X_hist[iter_num, i], field) for i in range(self.pop)]
 
-        for iter_num in range(self.max_iter):
-            fig, axs = plt.subplots(2, 2, figsize=(12, 8))
-            axs = axs.flatten()
-            for j, field in enumerate(fields):
-                values = [getattr(self.X_hist[iter_num, i], field) for i in range(self.pop)]
-                axs[j].scatter(range(1, self.pop + 1), values, c='b', alpha=0.7)
-                axs[j].set_title(f'{field} (Iteration {iter_num + 1})')
-                axs[j].set_xlabel('Particle')
-                axs[j].set_ylabel(field)
-                axs[j].grid()
-            plt.tight_layout()
-            plt.suptitle(f'Particle Parameter Scatter (Iteration {iter_num + 1})', y=1.02)
-            plt.savefig(os.path.join(save_dir, f'iteration_{iter_num + 1}_scatter.png'), bbox_inches='tight')
-            plt.close(fig)
+                    axs[j].scatter(range(1, self.pop + 1), values, c='b', alpha=0.7)
+                    axs[j].set_title(f'{field} (Iteration {iter_num})')
+                    axs[j].set_xlabel('Particle')
+                    axs[j].set_ylabel(field)
+                    axs[j].grid()
+                plt.tight_layout()
+                plt.suptitle(f'Particle Parameter Scatter (Iteration {iter_num})', y=1.02)
+                plt.savefig(os.path.join(save_dir, f'iteration_{iter_num}_scatter.png'), bbox_inches='tight')
+                plt.close(fig)            
+        except Exception as e:
+            traceback.print_exc()
+            print(f"Error plotting particle scatter: {e}")
     
     def plot_gbest_y_hist(self):
         """
         Plot gbest_y_hist which is the best y value among all particles in each iteration.
         """
-
-        _, ax = plt.subplots(figsize=(12, 8))
-        plt.plot(self.gbest_y_hist, color='darkblue', linewidth=1.5)
-        ax.set_title(f'Best Global y Value', pad=15) 
-        ax.set_xlabel('Iter', labelpad=10)
-        ax.set_ylabel('gbest_gloal', labelpad=10)
-        ax.tick_params(axis='both', which='major')
-        
-        figure_name = f'{self.save_dir}/gbest_y_hist.png'
-        plt.savefig(figure_name)
-        plt.close()
+        try:
+            _, ax = plt.subplots(figsize=(12, 8))
+            plt.plot(self.gbest_y_hist, color='darkblue', linewidth=1.5)
+            ax.set_title(f'Best Global y Value', pad=15) 
+            ax.set_xlabel('Iter', labelpad=10)
+            ax.set_ylabel('gbest_gloal', labelpad=10)
+            ax.tick_params(axis='both', which='major')
+            
+            figure_name = f'{self.save_dir}/gbest_y_hist.png'
+            plt.savefig(figure_name)
+            plt.close()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"Error plotting evolution: {e}")
         
     def visualize(self):
         self.plot_particle_evolution()
