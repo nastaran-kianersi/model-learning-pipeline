@@ -62,6 +62,8 @@ def avg_revision_scores(path):
             total += val
             count += 1
 
+    if count == 0:
+        return 0, 0
     return total/count, count
 
 
@@ -265,7 +267,7 @@ class PSO(SkoBase):
     
     # TODO: submit a job that runs particle_job with the best parameters found
     # and saves the traces and the learned model to output_dir
-    def run_for_xbest():
+    def run_for_xbest(self):
         pass
     
     def update_pbest(self):
