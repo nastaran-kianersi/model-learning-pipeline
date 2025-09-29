@@ -141,8 +141,8 @@ class PSO(SkoBase):
 
     
     # For later: Use inheritance and use the base class in __init__
-    def __init__(self, exec_trace_addr, output_dir, jobscript_addr, pop, max_iter, w=0.8, c1=0.5, c2=0.5,
-                 constraint_eq=tuple(), constraint_ueq=tuple(), verbose=False):
+    def __init__(self, exec_trace_addr, output_dir, jobscript_addr, pop, max_iter, w=0.8, c1=1, c2=1,
+                 auto_coeffs=True, constraint_eq=tuple(), constraint_ueq=tuple(), verbose=False):
 
         self.exec_trace_addr = exec_trace_addr
         self.output_dir = output_dir
@@ -159,6 +159,7 @@ class PSO(SkoBase):
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
+        self.auto_coeffs = auto_coeffs
         self.pop = pop  # number of particles
         self.max_iter = max_iter  # max iter
         self.verbose = verbose  # print the result of each iter or not
@@ -180,6 +181,7 @@ class PSO(SkoBase):
         self.gbest_y = np.inf  # global best y for all particles
         self.gbest_y_hist = []  # gbest_y of every iteration - not used
         self.update_gbest()
+        self.update_coeffs()
 
         # record verbose values
         self.record_mode = False
@@ -207,6 +209,14 @@ class PSO(SkoBase):
     def update_X(self):
         self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
         
+    def update_coeffs(self):
+        if self.auto_coeffs:
+            t = self.iter_num
+            n = self.max_iter
+            self.w = (0.4/n**2) * (t - n) ** 2 + 0.4
+            self.cp = -3 * t / n + 3.5
+            self.cg =  3 * t / n + 0.5
+            
     # Use subprocess to run the job script and get the results
     def call_scripts(self):
         """
@@ -264,7 +274,6 @@ class PSO(SkoBase):
         self.Y = np.array(results)  
         return self.Y
     
-    
     # TODO: submit a job that runs particle_job with the best parameters found
     # and saves the traces and the learned model to output_dir
     def run_for_xbest(self):
@@ -311,7 +320,7 @@ class PSO(SkoBase):
         c = 0
         for iter_num in range(self.max_iter):
             self.iter_num = iter_num
-            print("Iter ", iter_num)
+            print("Iter ", iter_num, "Coeffs: w=", self.w, " cp=", self.cp, " cg=", self.cg)
             self.update_V()
             self.recorder()
             self.update_X()
@@ -319,6 +328,7 @@ class PSO(SkoBase):
                                 # of y for each particle. Run a separate job for each particle.
             self.update_pbest()
             self.update_gbest()
+            self.update_coeffs()
             
             if precision is not None:
                 tor_iter = np.amax(self.pbest_y) - np.amin(self.pbest_y)
@@ -335,11 +345,73 @@ class PSO(SkoBase):
             self.Y_hist[iter_num] = self.Y.copy()
             self.X_hist[iter_num] = self.X.copy()
             
+            if self.analyze_convergence():
+                print(f"Converged at iteration {iter_num}. Stopping early.")
+                break
+            
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
         return self.best_x, self.best_y
     
-    # TODO: add convergence analysis: a simple functions that uses a couple of methods
-    # to see if we've converged
+    def analyze_convergence(self):
+        try:
+            gbest_converged = self.has_converged_gbest()
+            pos_converged, vel_converged = self.has_converged_particles()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"Error in convergence analyzer: {e}")
+            
+        return gbest_converged and (pos_converged or vel_converged)
+        
+    def has_converged_gbest(self, patience=10, rel_tol=1e-4):
+        """
+        Check convergence based on stability of global best fitness.
+        Args:
+            patience (int): Number of iterations to look back for improvement.
+            rel_tol (float): Relative tolerance to detect "no significant improvement".
+                            Automatically scaled relative to fitness values.
+        Returns:
+            bool: True if gbest has converged, False otherwise.
+        """
+        if len(self.gbest_y_hist) < patience + 1:
+            return False
+
+        recent = self.gbest_y_hist[-patience:]
+        past = self.gbest_y_hist[-(patience+1)]
+        
+        improvement = abs(recent[-1] - past)
+        scale = max(abs(past), 1.0)  # avoid division by zero
+        rel_improvement = improvement / scale
+        
+        print("gbest improvement analysis:", "converged" if rel_improvement < rel_tol else "not converged")
+        return rel_improvement < rel_tol
+
+    def has_converged_particles(self, tol_factor=1e-2):
+        """
+        Check convergence based on particle coalescence and velocity collapse.
+        Args:
+            tol_factor (float): Factor relative to position/velocity spread to determine convergence.
+        (Plan to) Return:
+            dict: {
+                "position_converged": bool,
+                "velocity_converged": bool
+            }
+        """
+        positions = self.X
+        velocities = self.V
+        
+        # Position convergence: low spread in particle positions
+        pos_spread = DecisionVarMean(DecisionVarStd(positions))
+        pos_scale = DecisionVarMean(DecisionVarAbs(positions)) + 1e-9
+        position_converged = pos_spread / pos_scale < tol_factor
+        
+        # Velocity convergence: near-zero average velocity
+        vel_norms = np.linalg.norm(velocities, axis=1)
+        velocity_converged = np.mean(vel_norms) < tol_factor * pos_scale
+        
+        print("Convergence analysis based on position:", "converged" if position_converged else "not converged")
+        print("Convergence analysis based on velocity:", "converged" if velocity_converged else "not converged")
+        
+        return position_converged, velocity_converged
     
     def plot_particle_evolution(self):
         """

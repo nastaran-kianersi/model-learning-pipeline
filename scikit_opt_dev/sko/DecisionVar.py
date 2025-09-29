@@ -215,8 +215,48 @@ def Test_DecisionVarMean():
     assert isinstance(mean_dv, DecisionVar), "Mean should be a DecisionVar instance"
     
     
+def DecisionVarStd(decision_vars):
+    """Calculate the standard deviation of a list of DecisionVar instances."""
+    if len(decision_vars) == 0:
+        return None
+        
+    values = [var.to_array() for var in decision_vars] 
+    std_values = np.std(values, axis=0)
+    '''For kernel, use the most common value (mode)
+       If more than kernel type is common, choose the first one in the list'''
+    kernel_types = [int(var.kernel.value) for var in decision_vars]
+    kernel_type_mode = most_common(kernel_types)    # max(set(kernel_types), key=kernel_types.count)
+    std_values[2] = kernel_type_mode
+    
+    return DecisionVar(
+        min_size=int(std_values[0]),
+        penalty=float(std_values[1]),
+        kernel=KernelType(int(std_values[2])),
+        rbf_gamma=float(std_values[3])
+    )
+    
+    
+def DecisionVarAbs(decision_vars):
+    """Calculate the abs of a list of DecisionVar instances."""
+    if len(decision_vars) == 0:
+        return None
+        
+    values = [var.to_array() for var in decision_vars]    
+    abs_vals = np.abs(values)
+    abs_values = np.array([DecisionVar.from_array(abs_val) for abs_val in abs_vals])
+    return abs_values
+    
+    
 def Test_DecisionVarArithmetic():
     """Test arithmetic operations on DecisionVar instances."""
+    
+    print("Testing mean, abs, and std:")
+    rand_dvs = np.array([DecisionVar.random() for _ in range(10)])
+    print(rand_dvs)
+    print("\n\n\n\n")
+    print(DecisionVarMean(rand_dvs))
+    print(DecisionVarAbs(rand_dvs))
+    print(DecisionVarStd(rand_dvs))
     
     dv1 = DecisionVar.random()
     dv2 = DecisionVar.random()
@@ -240,3 +280,6 @@ def Test_DecisionVarArithmetic():
     
     assert isinstance(sum_dv, DecisionVar), "Sum should be a DecisionVar instance"
     assert isinstance(diff_dv, DecisionVar), "Difference should be a DecisionVar instance"
+    
+    
+    
