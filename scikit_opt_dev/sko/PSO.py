@@ -10,6 +10,7 @@ from .DecisionVar import *
 import subprocess
 import time
 import os
+import copy
 
 import csv
 import re
@@ -141,10 +142,12 @@ class PSO(SkoBase):
 
     
     # For later: Use inheritance and use the base class in __init__
-    def __init__(self, exec_trace_addr, output_dir, jobscript_addr, pop, max_iter, w=0.8, c1=1, c2=1,
-                 auto_coeffs=True, constraint_eq=tuple(), constraint_ueq=tuple(), verbose=False):
+    def __init__(self, exec_trace_addr, propfile, output_dir, jobscript_addr, pop, max_iter,
+                 w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, 
+                 constraint_eq=tuple(), constraint_ueq=tuple(), verbose=False):
 
         self.exec_trace_addr = exec_trace_addr
+        self.propfile = propfile
         self.output_dir = output_dir
         self.jobscript_addr = jobscript_addr
         dt_str = datetime.now().strftime("run_%Y-%m-%d_at_%H-%M-%S")
@@ -161,7 +164,8 @@ class PSO(SkoBase):
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
         self.auto_coeffs = auto_coeffs
         self.pop = pop  # number of particles
-        self.max_iter = max_iter  # max iter
+        self.max_iter = max_iter 
+        self.early_termination = early_termination  # whether to terminate early if converged
         self.verbose = verbose  # print the result of each iter or not
 
         self.lb, self.ub = DecisionVar.lb, DecisionVar.ub
@@ -182,11 +186,14 @@ class PSO(SkoBase):
         self.gbest_y_hist = []  # gbest_y of every iteration - not used
         self.update_gbest()
         self.update_coeffs()
-
+        
         # record verbose values
         self.record_mode = False
         self.record_value = {'X': [], 'V': [], 'Y': []}
         self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
+        
+        # Added to support discrete and binary PSO
+        self.V_prev_gamma = np.copy(self.V[:, 3])  # to track previous velocity of rbf_gamma
 
     def check_constraint(self, x):
         # gather all unequal constraint functions
@@ -195,20 +202,32 @@ class PSO(SkoBase):
                 return False
         return True
 
+    # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
     # numpy vectorization can also be used instead of list comprehension
     def update_V(self):
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
-        intrm1 = np.array([(self.pbest_x[i].to_array() - self.X[i].to_array()) for i in range(self.pop)])
-        intrm2 = np.array([(self.gbest_x.to_array() - self.X[i].to_array()) for i in range(self.pop)])
+        intrm1 = np.array([self.pbest_x[i].to_array()  - self.X[i].to_array() for i in range(self.pop)])
+        intrm2 = np.array([self.gbest_x.to_array()  - self.X[i].to_array() for i in range(self.pop)])
+        self.V_prev_gamma = np.copy(self.V[:, 3])
         self.V = self.w * self.V + \
                  self.cp * r1 * intrm1 + \
                  self.cg * r2 * intrm2
-
-    # So not optimized
-    def update_X(self):
-        self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
+                
+        # for i in range(self.pop):
+        #     self.V[i, 3] = self.V[i, 3] * 0.95 if self.X[i].kernel != KernelType.RBF else self.V[i, 3]
         
+    # position is handelled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
+    def update_X(self):
+        # self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
+        X_tmp_arr = np.array([(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
+        for i in range(self.pop):
+            if self.X[i].kernel != KernelType.RBF:
+                X_tmp_arr[i, 3] = self.X[i].rbf_gamma  # keep the same rbf_gamma if kernel is not RBF
+                self.V[i, 3] = self.V_prev_gamma[i]
+                
+        self.X = np.array([DecisionVar.from_array(X_tmp_arr[i]) for i in range(self.pop)])
+    
     def update_coeffs(self):
         if self.auto_coeffs:
             t = self.iter_num
@@ -232,15 +251,17 @@ class PSO(SkoBase):
         results = [0] * self.pop
         
         for idx, x in enumerate(self.X):
+            x = copy.copy(x)
+            x.rbf_gamma = float(x.rbf_gamma) if x.kernel == KernelType.RBF else 0.0
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, self.jobscript_addr, str(self.exec_trace_addr)] + args
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, self.jobscript_addr]
             
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
-            cmd = ["sbatch", "./jobscript.sh", str(self.exec_trace_addr)] + args 
+            cmd = ["sbatch", "./jobscript.sh", str(self.exec_trace_addr), str(self.propfile)] + args 
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
             processes.append(proc)
             
@@ -345,9 +366,10 @@ class PSO(SkoBase):
             self.Y_hist[iter_num] = self.Y.copy()
             self.X_hist[iter_num] = self.X.copy()
             
-            if self.analyze_convergence():
-                print(f"Converged at iteration {iter_num}. Stopping early.")
-                break
+            if self.early_termination:
+                if self.analyze_convergence():
+                    print(f"Converged at iteration {iter_num}. Stopping early.")
+                    break
             
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
         return self.best_x, self.best_y
@@ -356,11 +378,11 @@ class PSO(SkoBase):
         try:
             gbest_converged = self.has_converged_gbest()
             pos_converged, vel_converged = self.has_converged_particles()
+            return gbest_converged and (pos_converged or vel_converged)
+        
         except Exception as e:
             traceback.print_exc()
             print(f"Error in convergence analyzer: {e}")
-            
-        return gbest_converged and (pos_converged or vel_converged)
         
     def has_converged_gbest(self, patience=10, rel_tol=1e-4):
         """
@@ -400,8 +422,8 @@ class PSO(SkoBase):
         velocities = self.V
         
         # Position convergence: low spread in particle positions
-        pos_spread = DecisionVarMean(DecisionVarStd(positions))
-        pos_scale = DecisionVarMean(DecisionVarAbs(positions)) + 1e-9
+        pos_spread = np.mean(DecisionVarStd(positions).to_array())
+        pos_scale = np.mean(DecisionVarMean(DecisionVarAbs(positions)).to_array()) + 1e-9
         position_converged = pos_spread / pos_scale < tol_factor
         
         # Velocity convergence: near-zero average velocity

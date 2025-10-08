@@ -55,12 +55,14 @@ class DecisionVar:
     lb = np.array([10, 5.0, 0, 0.05])
     ub = np.array([500, 100.0, len(KernelType) - 1, 10.0])
         
+    # in update_X and update_V, handle rbf_gamma when kernel is not rbf,
+    # in here, handle discrete arithmetic
     @staticmethod
     def random():
         min_size = np.random.randint(DecisionVar.lb[0], DecisionVar.ub[0])
         penalty = np.random.uniform(DecisionVar.lb[1], DecisionVar.ub[1])
         kernel = np.random.choice(list(KernelType))
-        rbf_gamma = np.random.uniform(DecisionVar.lb[3], DecisionVar.ub[3]) if kernel == KernelType.RBF else None
+        rbf_gamma = np.random.uniform(DecisionVar.lb[3], DecisionVar.ub[3])
         return DecisionVar(min_size, penalty, kernel, rbf_gamma)
     
     def __init__(
@@ -68,7 +70,7 @@ class DecisionVar:
         min_size: int,
         penalty: float,
         kernel: KernelType,
-        rbf_gamma: float = 0,
+        rbf_gamma: float,
     ):
         self.min_size = min_size
         self.penalty = penalty
@@ -100,6 +102,7 @@ class DecisionVar:
         
         arr_sum = self.to_array() + other.to_array()
         kernel = self.kernel + other.kernel
+            
         result = DecisionVar(
             min_size=int(arr_sum[0]),
             penalty=float(arr_sum[1]),
@@ -115,6 +118,7 @@ class DecisionVar:
         
         arr_diff = self.to_array() - other.to_array()
         kernel = self.kernel - other.kernel
+        
         result = DecisionVar(
             min_size=int(arr_diff[0]),
             penalty=float(arr_diff[1]),
@@ -148,10 +152,7 @@ class DecisionVar:
         self.min_size = np.clip(self.min_size, DecisionVar.lb[0], DecisionVar.ub[0])
         self.penalty = np.clip(self.penalty, DecisionVar.lb[1], DecisionVar.ub[1])
         self.kernel = KernelType(int(np.clip(self.kernel.value, DecisionVar.lb[2], DecisionVar.ub[2])))
-        if self.kernel == KernelType.RBF:
-            self.rbf_gamma = np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
-        else:
-            self.rbf_gamma = 0
+        self.rbf_gamma = np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
     
 
 # =========================
@@ -220,10 +221,11 @@ def DecisionVarStd(decision_vars):
     if len(decision_vars) == 0:
         return None
         
-    values = [var.to_array() for var in decision_vars] 
+    values = np.array([var.to_array() for var in decision_vars])
     std_values = np.std(values, axis=0)
+    
     '''For kernel, use the most common value (mode)
-       If more than kernel type is common, choose the first one in the list'''
+    If more than kernel type is common, choose the first one in the list'''
     kernel_types = [int(var.kernel.value) for var in decision_vars]
     kernel_type_mode = most_common(kernel_types)    # max(set(kernel_types), key=kernel_types.count)
     std_values[2] = kernel_type_mode
@@ -241,10 +243,13 @@ def DecisionVarAbs(decision_vars):
     if len(decision_vars) == 0:
         return None
         
-    values = [var.to_array() for var in decision_vars]    
-    abs_vals = np.abs(values)
-    abs_values = np.array([DecisionVar.from_array(abs_val) for abs_val in abs_vals])
-    return abs_values
+    ### The generic way:
+    # values = [var.to_array() for var in decision_vars]    
+    # abs_vals = np.abs(values)
+    # abs_values = np.array([DecisionVar.from_array(abs_val) for abs_val in abs_vals])
+    # return abs_values
+    
+    return decision_vars # since all values are positive already
     
     
 def Test_DecisionVarArithmetic():

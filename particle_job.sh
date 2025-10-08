@@ -14,10 +14,16 @@ export PYTHONUNBUFFERED=TRUE
 echo "Particle job started at: $(date)"
 
 # Construct the uv command arguments
-file_arg="$1"
+infile_arg="$1"
 shift
-echo $file_arg
-file_addr="${file_arg#--file_addr=}"
+echo $infile_arg
+infile_addr="${infile_arg#--infile_addr=}"
+
+propfile_arg="$1"
+shift
+echo $propfile_arg
+propfile_addr="${propfile_arg#--propfile_addr=}"
+
 uv_args=("$@")
 echo "${uv_args[@]}"
 
@@ -26,15 +32,16 @@ cd ../../Heat_Pump/
 source ./.venv/bin/activate
 cd nfer_format_compatibility
 echo "The actual script started running at: $(date)"
-cp $file_addr "$TMPDIR"/$(basename "$file_addr")
-uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$file_addr") --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --split-time "08:00" --alg-params "${uv_args[@]}"
+cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
+cp $propfile_addr "$TMPDIR"/$(basename "$propfile_addr")
+uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$TMPDIR"/$(basename "$propfile_addr") --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --split-time "08:00" --alg-params "${uv_args[@]}"
 deactivate
 
 # Automata Learning
 module load java/21.0.1
 hpm_executable=build/distributions/heat-pump-mining-0.0.0-14-ad1ef39-SNAPSHOT/
 EventTracePath="$TMPDIR/CPD_Analysis_Outputs/event_traces.zip"
-cp "$EventTracePath" "./CPD_Analysis_Outputs/event_traces_${SLURM_JOB_ID}.zip"
+# cp "$EventTracePath" "./CPD_Analysis_Outputs/event_traces_${SLURM_JOB_ID}.zip"
 
 cd ../../hpm_automata_learning/heat-pump-mining/
 exec_path=build/distributions/heat-pump-mining-0.0.0-14-ad1ef39-SNAPSHOT/bin/heat-pump-mining
