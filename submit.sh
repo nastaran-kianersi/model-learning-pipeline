@@ -1,10 +1,15 @@
 #!/bin/bash
 
-echo "#!/bin/bash" > jobscript.sh
-echo "#SBATCH -o ${1}job_%A.out" >> jobscript.sh
-echo "#SBATCH -e ${1}job_%A.err" >> jobscript.sh
+echo "#!/bin/bash" > $3
+echo "#SBATCH -o ${1}job_%A.out" >> $3
+echo "#SBATCH -e ${1}job_%A.err" >> $3
 
-cat $2 >> jobscript.sh
+# these don't output anything and idk why
+#echo ${2}
+#echo ${3}
+
+# cat $2 >> jobscript.sh
+cat $2 >> $3
 
 # tmp_arg="$1"
 # shift

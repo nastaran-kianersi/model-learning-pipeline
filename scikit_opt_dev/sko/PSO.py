@@ -5,7 +5,6 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-from .base import SkoBase
 from .DecisionVar import *
 import subprocess
 import time
@@ -68,17 +67,20 @@ def avg_revision_scores(path):
     return total/count, count
 
 
-class PSO(SkoBase):
+class PSO():
     """
-    Do PSO (Particle swarm optimization) algorithm.
+    PSO (Particle swarm optimization) algorithm.
 
+    This code is derived from scikit-opt library and tailored specifically for optimizating
+    the heat pump mining process.
+    see https://scikit-opt.github.io/scikit-opt/#/en/README?id=_3-psoparticle-swarm-optimization
+    
     This algorithm was adapted from the earlier works of J. Kennedy and
     R.C. Eberhart in Particle Swarm Optimization [IJCNN1995]_.
 
     The position update can be defined as:
 
     .. math::
-
        x_{i}(t+1) = x_{i}(t) + v_{i}(t+1)
 
     Where the position at the current step :math:`t` is updated using
@@ -101,59 +103,88 @@ class PSO(SkoBase):
     Proceedings of the IEEE International Joint Conference on Neural
     Networks, 1995, pp. 1942-1948.
 
+    This class is designed specifically for optimizing DecisionVar instances
+    using a distributed approach where each particle's fitness evaluation is
+    performed by submitting a separate job to a cluster via a SLURM job script.
+    The value returned by each job is used as the fitness score for that particle,
+    and we are optimizing for that fitness score.
+    
     Parameters
     --------------------
-    func : function
-        The func you want to do optimal
-    dim : int
-        Number of dimension, which is number of parameters of func.
-    pop : int
-        Size of population, which is the number of Particles. We use 'pop' to keep accordance with GA
-    max_iter : int
-        Max of iter iterations
-    lb : array_like
-        The lower bound of every variables of func
-    ub : array_like
-        The upper bound of every variables of func
-    constraint_eq : tuple
-        equal constraint. Note: not available yet.
-    constraint_ueq : tuple
-        unequal constraint
-    n_processes : int
-        Number of processes, 0 means use all cpu
+    exec_trace_addr : str
+        Path to the executable trace file required for job execution.
+    configs_dir : str
+        Path to the property files used in the optimization jobs.
+    output_dir : str
+        Directory where output files and results will be saved.
+    w : float, optional (default=0.8)
+        Inertia weight controlling the influence of previous velocity.
+    c1 : float, optional (default=1)
+        Cognitive parameter controlling the influence of personal best.
+    c2 : float, optional (default=1)
+        Social parameter controlling the influence of global best.
+    auto_coeffs : bool, optional (default=True)
+        If True, automatically update PSO coefficients during optimization.
+    early_termination : bool, optional (default=False)
+        If True, terminate early if convergence is detected.
+    verbose : bool, optional (default=False)
+        If True, print detailed information during optimization.
+    
     Attributes
     ----------------------
-    pbest_x : array_like, shape is (pop,dim)
-        best location of every particle in history
-    pbest_y : array_like, shape is (pop,1)
-        best image of every particle in history
-    gbest_x : array_like, shape is (1,dim)
-        general best location for all particles in history
-    gbest_y : float
-        general best image  for all particles in history
-    gbest_y_hist : list
-        gbest_y of every iteration
+    X : np.ndarray
+        Current positions of all particles (array of DecisionVar).
+    V : np.ndarray
+        Current velocities of all particles.
+    Y : np.ndarray
+        Current fitness values of all particles.
+    pbest_x : np.ndarray
+        Personal best positions for each particle.
+    pbest_y : np.ndarray
+        Personal best fitness values for each particle.
+    gbest_x : DecisionVar
+        Global best position found by the swarm.
+        Global best fitness value found by the swarm.
+        History of global best fitness values across iterations.
+    X_hist : np.ndarray
+        History of particle positions for each iteration (for plotting).
+    Y_hist : np.ndarray
+        History of particle fitness values for each iteration (for plotting).
+    save_dir : str
+        Directory where run-specific outputs and plots are saved.
+    record_mode : bool
+        If True, records additional values for analysis.
+    record_value : dict
+        Stores recorded values for positions, velocities, and fitness.
+    best_x : DecisionVar
+        Best position found (for backward compatibility).
+    best_y : float
+        Best fitness value found (for backward compatibility).
+    lb : np.ndarray
+        Lower bounds for each DecisionVar dimension.
+    ub : np.ndarray
+        Upper bounds for each DecisionVar dimension.
+    n_dim : int
+        Number of dimensions in DecisionVar.
+    V_prev_gamma : np.ndarray
+        Previous velocity values for the rbf_gamma parameter (for discrete/binary PSO).
+    iter_num : int
+        Current iteration number.
 
-
-    Examples
-    -----------------------------
-    see https://scikit-opt.github.io/scikit-opt/#/en/README?id=_3-psoparticle-swarm-optimization
     """
-
-    
-    # For later: Use inheritance and use the base class in __init__
-    def __init__(self, exec_trace_addr, propfile, output_dir, jobscript_addr, pop, max_iter,
-                 w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, 
-                 constraint_eq=tuple(), constraint_ueq=tuple(), verbose=False):
+    def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
+                 w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, verbose=False):
 
         self.exec_trace_addr = exec_trace_addr
-        self.propfile = propfile
+        self.configs_dir = configs_dir
         self.output_dir = output_dir
-        self.jobscript_addr = jobscript_addr
         dt_str = datetime.now().strftime("run_%Y-%m-%d_at_%H-%M-%S")
         self.save_dir = os.path.join(self.output_dir, dt_str)
         os.makedirs(self.save_dir, exist_ok=True)
         self.iter_num = 0
+        
+        self.onetime_process = []
+        self.onetime_job_id = []
         
         self.X = np.array([DecisionVar.random() for _ in range(pop)])
         self.n_dim = DecisionVar.n_dim  
@@ -162,9 +193,9 @@ class PSO(SkoBase):
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
-        self.auto_coeffs = auto_coeffs
         self.pop = pop  # number of particles
         self.max_iter = max_iter 
+        self.auto_coeffs = auto_coeffs
         self.early_termination = early_termination  # whether to terminate early if converged
         self.verbose = verbose  # print the result of each iter or not
 
@@ -172,18 +203,15 @@ class PSO(SkoBase):
         assert self.n_dim == len(self.lb) == len(self.ub), 'dim == len(lb) == len(ub) is not True'
         assert np.all(self.ub > self.lb), 'upper-bound must be greater than lower-bound'
 
-        self.has_constraint = bool(constraint_ueq)
-        self.constraint_ueq = constraint_ueq
-        self.is_feasible = np.array([True] * pop)
-
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * pop)
-        self.pbest_x = self.X.copy()  # personal best location of every particle in history
-        self.pbest_y = np.array([np.inf] * pop)  # best image of every particle in history
-        self.gbest_x = DecisionVarMean(self.pbest_x)  # global best location for all particles
-        self.gbest_y = np.inf  # global best y for all particles
-        self.gbest_y_hist = []  # gbest_y of every iteration - not used
+        self.pbest_x = self.X.copy()                    # personal best location of every particle in history
+        self.pbest_y = np.array([np.inf] * pop)         # best image of every particle in history
+        self.gbest_x = DecisionVarMean(self.pbest_x)    # global best location for all particles
+        self.gbest_y = np.inf                           # global best y for all particles
+        self.gbest_y_hist = []                          # gbest_y of every iteration
+        
         self.update_gbest()
         self.update_coeffs()
         
@@ -192,15 +220,8 @@ class PSO(SkoBase):
         self.record_value = {'X': [], 'V': [], 'Y': []}
         self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
         
-        # Added to support discrete and binary PSO
+        # support conditional variables: if kernel in the next iter is not rbf, rbf_gamma should not change
         self.V_prev_gamma = np.copy(self.V[:, 3])  # to track previous velocity of rbf_gamma
-
-    def check_constraint(self, x):
-        # gather all unequal constraint functions
-        for constraint_func in self.constraint_ueq:
-            if constraint_func(x) > 0:
-                return False
-        return True
 
     # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
     # numpy vectorization can also be used instead of list comprehension
@@ -214,10 +235,7 @@ class PSO(SkoBase):
                  self.cp * r1 * intrm1 + \
                  self.cg * r2 * intrm2
                 
-        # for i in range(self.pop):
-        #     self.V[i, 3] = self.V[i, 3] * 0.95 if self.X[i].kernel != KernelType.RBF else self.V[i, 3]
-        
-    # position is handelled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
+    # position is handled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
     def update_X(self):
         # self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
         X_tmp_arr = np.array([(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
@@ -239,7 +257,7 @@ class PSO(SkoBase):
     # Use subprocess to run the job script and get the results
     def call_scripts(self):
         """
-        For each particle, submit an sbatch job using the jobscript at self.jobscript_addr,
+        For each particle, submit an sbatch job using particle_job_base.sh,
         passing the variables in self.X as command-line arguments.
         Wait for all jobs to finish and collect their output as the fitness value.
         """
@@ -255,13 +273,14 @@ class PSO(SkoBase):
             x.rbf_gamma = float(x.rbf_gamma) if x.kernel == KernelType.RBF else 0.0
             args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                     for key, value in vars(x).items()]
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, self.jobscript_addr]
+            # I/O overhead because submit.sh reads particle_job_base.sh and writes particle_job.sh for each particle
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, './particle_job_base.sh', '/particle_job.sh']
             
             # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
             # You can use shell=True to give the whole command as a string, but it has security risks.
             # Text=true: returns buffers in text mode, not bytes
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
-            cmd = ["sbatch", "./jobscript.sh", str(self.exec_trace_addr), str(self.propfile)] + args 
+            cmd = ["sbatch", "./particle_job.sh", str(self.exec_trace_addr), str(self.configs_dir)] + args 
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
             processes.append(proc)
             
@@ -288,28 +307,52 @@ class PSO(SkoBase):
                     avg, n = avg_revision_scores(out_file)
                     print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
                     pending.remove(idx)
-                    results[idx] = -avg # if n > 0 else float('inf')  # Minimize negative score (maximize score)
+                    results[idx] = -avg # Minimize negative score (== maximize score)
                 else:
                     time.sleep(5)
             
         self.Y = np.array(results)  
         return self.Y
     
-    # TODO: submit a job that runs particle_job with the best parameters found
+    # TODO: submit a job that runs particle job with the best parameters found
     # and saves the traces and the learned model to output_dir
     def run_for_xbest(self):
         pass
     
+    def run_one_time_job(self):
+        job_out_file_dir = str(os.path.join(self.save_dir, ''))
+        os.makedirs(job_out_file_dir, exist_ok=True)
+        
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './onetime_job.sh']
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+        cmd = ["sbatch", "./onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
+        self.onetime_process = proc
+            
+        stdout = proc.stdout.readline()
+        job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+        self.onetime_job_id = int(job_id)
+        print("Submitting one-time job", job_id, " for discrete variables.")
+            
+        while True:
+            if self.onetime_process.poll() is not None:
+                #
+                # TODO: use the created zip file
+                #
+                out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
+                self.onetime_process = None
+                self.onetime_job_id = None
+                print("One-time job finished. Output file:", out_file)
+                break
+            else:
+                time.sleep(5)
+            
     def update_pbest(self):
         '''
         personal best
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        for idx, x in enumerate(self.X):
-            if self.need_update[idx]:
-                self.need_update[idx] = self.check_constraint(x)
-
         self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
@@ -330,46 +373,42 @@ class PSO(SkoBase):
         self.record_value['V'].append(self.V)
         self.record_value['Y'].append(self.Y)
     
-    # finds the global miminum, so define the function such that it returns the negative of accuray
-    def optimize_distributed(self, precision=None, N=20):
-        '''
-        precision: None or float
-            If precision is None, it will run the number of max_iter steps
-            If precision is a float, the loop will stop if continuous N difference between pbest less than precision
-        N: int
-        '''
-        c = 0
-        for iter_num in range(self.max_iter):
-            self.iter_num = iter_num
-            print("Iter ", iter_num, "Coeffs: w=", self.w, " cp=", self.cp, " cg=", self.cg)
-            self.update_V()
-            self.recorder()
-            self.update_X()
-            self.call_scripts() # Call the jobs and wait for them to finish, then the returned value would be the value
-                                # of y for each particle. Run a separate job for each particle.
-            self.update_pbest()
-            self.update_gbest()
-            self.update_coeffs()
-            
-            if precision is not None:
-                tor_iter = np.amax(self.pbest_y) - np.amin(self.pbest_y)
-                if tor_iter < precision:
-                    c = c + 1
-                    if c > N:
-                        break
-                else:
-                    c = 0
-            if self.verbose:
-                print('Iter: {}, Best fit: {} at {}'.format(iter_num, self.gbest_y, self.gbest_x))
+    def iterate(self, iter_num):
+        converged = False
+        
+        self.iter_num = iter_num
+        print("Iter ", iter_num, "Coeffs: w=", self.w, " cp=", self.cp, " cg=", self.cg)
+        self.update_V()
+        self.recorder()
+        self.update_X()
+        self.call_scripts() # Call the jobs and wait for them to finish, then the returned value would be the value
+                            # of y for each particle. Run a separate job for each particle.
+        self.update_pbest()
+        self.update_gbest()
+        self.update_coeffs()
+        
+        if self.verbose:
+            print('Iter: {}, Best fit: {} at {}'.format(iter_num, self.gbest_y, self.gbest_x))
 
-            self.gbest_y_hist.append(self.gbest_y)
-            self.Y_hist[iter_num] = self.Y.copy()
-            self.X_hist[iter_num] = self.X.copy()
+        self.gbest_y_hist.append(self.gbest_y)
+        self.Y_hist[iter_num] = self.Y.copy()
+        self.X_hist[iter_num] = self.X.copy()
+        
+        if self.early_termination:
+            if self.analyze_convergence():
+                print(f"Converged at iteration {iter_num}. Stopping early.")
+                converged = True
             
-            if self.early_termination:
-                if self.analyze_convergence():
-                    print(f"Converged at iteration {iter_num}. Stopping early.")
-                    break
+        return converged
+    
+    def optimize_distributed(self):
+        self.run_one_time_job()
+        exit(1)
+             
+        for iter_num in range(self.max_iter):
+            converged = self.iterate(iter_num)
+            if converged:
+                break
             
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
         return self.best_x, self.best_y
