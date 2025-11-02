@@ -1,4 +1,4 @@
 flow_temperature, continuous
 return_flow_temperature, continuous
 hc_zone1, continuous
-set_flow_zone_1, continuous
+#set_flow_zone_1, continuous

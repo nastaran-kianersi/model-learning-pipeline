@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# @Time    : 2019/8/20
-# @Author  : github.com/guofei9987 - Modified by Nastaran Kianersi
+# @Time    : 2025/7/16
+# @Author  : Nastaran Kianersi (based on PSO.py at github.com/guofei9987)
 
 import matplotlib.pyplot as plt
 import numpy as np
 from .DecisionVar import *
+from .BinaryPSO import *
 import subprocess
+from multiprocessing import Process
 import time
 import os
 import copy
@@ -18,54 +20,39 @@ from datetime import datetime
 import traceback
 
 
-HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
-REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
+def parse_property_file(filepath):
+    """Parse the property type mapping file.
 
-def avg_revision_scores(path):
-    total = 0.0
-    count = 0
-    in_table = False
-    rev_idx = None
+    Each line: <comma-separated props>, <type>
+    Example:
+        temperature, continuous
+        return_flow, discrete
+        flow1, flow2, flow3, continuous
+    """
+    continuous, discrete = set(), set()
 
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(filepath, 'r') as f:
         for line in f:
-            if not in_table:
-                if HEADER_RE.search(line):
-                    # parse header to find the revision score column index
-                    header = next(csv.reader([line]))
-                    header = [h.strip() for h in header]
-                    for i, h in enumerate(header):
-                        if REV_COL_RE.match(h):
-                            rev_idx = i
-                            break
-                    if rev_idx is None:
-                        raise RuntimeError("Could not find REVISION-SCORE(S) column in header")
-                    in_table = True
-                # else: keep skipping lines until we hit the header
-                continue
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue  # skip empty/commented lines
 
-            # end of table heuristics: stop if we hit a blank line or a non-CSV-ish line
-            if not line.strip() or ',' not in line:
-                break
-
-            row = next(csv.reader([line]))
-            if len(row) <= rev_idx:
-                break
-
-            cell = row[rev_idx].strip()
-            # strip any stray characters (e.g., percentages) and convert to float
             try:
-                val = float(cell)
-            except ValueError:
-                val = float(re.sub(r'[^0-9eE+\-\.]', '', cell))
+                # Split by comma and then by type (continuous/discrete)
+                *props, typ = [item.strip() for item in line.split(',')]
+                typ = typ.lower()
+                props = [p for p in props if p]  # remove empty entries
 
-            total += val
-            count += 1
+                if typ not in ('continuous', 'discrete'):
+                    print(f"Skipping line '{line}' (invalid type: {typ})")
+                    continue
 
-    if count == 0:
-        return 0, 0
-    return total/count, count
+                target_set = continuous if typ == 'continuous' else discrete
+                target_set.update(props)
+            except Exception as e:
+                print(f"Failed to parse line '{line}': {e}")
 
+    return sorted(list(continuous)), sorted(list(discrete))
 
 class PSO():
     """
@@ -174,7 +161,7 @@ class PSO():
     """
     def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
                  w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, verbose=False):
-
+        
         self.exec_trace_addr = exec_trace_addr
         self.configs_dir = configs_dir
         self.output_dir = output_dir
@@ -186,10 +173,32 @@ class PSO():
         self.onetime_process = []
         self.onetime_job_id = []
         
-        self.X = np.array([DecisionVar.random() for _ in range(pop)])
-        self.n_dim = DecisionVar.n_dim  
-        self.X_hist = np.empty(dtype=DecisionVar, shape=(max_iter, pop)) # for plotting
-        self.Y_hist = np.empty(dtype=float, shape=(max_iter, pop))       # for plotting
+        # Parse .prop files to determine the size of CompositeDecisionVar and the dim of particles in BinaryPSO
+        with open(os.path.join(self.configs_dir, 'key_prop.txt'), 'r') as f:
+            self.key_prop = f.read().strip()
+            
+        _, self.onetime_props = parse_property_file(os.path.join(self.configs_dir, 'onetime_props.prop'))
+        self.continuous_props, _ = parse_property_file(os.path.join(self.configs_dir, 'optimizing_props.prop'))
+        for i, prop in enumerate(self.continuous_props):
+            fname = os.path.join(self.configs_dir, f"optimizing_props_{i}.prop")
+            with open(fname, "w") as fh:
+                fh.write(f"{prop}, continuous\n")
+            
+        self.all_props = self.onetime_props + self.continuous_props
+        bin_pso_pop      = 20 #30
+        bin_pso_max_iter = 30 #50
+        # create an array of BinaryPSO instances (one per particle)
+        self.binary_psos = np.array(
+            [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
+            dtype=object
+        )
+        # ... for BinaryPSO
+        
+        self.n_opt_vars = len(self.continuous_props)
+        self.X = np.array([CompositeDecisionVar.random(self.n_opt_vars) for _ in range(pop)])    
+        self.n_dim = self.X[0].n_dim                                              # = n_opt_vars * DecisionVar.n_dim
+        self.X_hist = np.empty(dtype=CompositeDecisionVar, shape=(max_iter, pop)) # for plotting
+        self.Y_hist = np.empty(dtype=float, shape=(max_iter, pop))                # for plotting
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
@@ -199,18 +208,18 @@ class PSO():
         self.early_termination = early_termination  # whether to terminate early if converged
         self.verbose = verbose  # print the result of each iter or not
 
-        self.lb, self.ub = DecisionVar.lb, DecisionVar.ub
+        self.lb, self.ub = self.X[0].lb, self.X[0].ub
         assert self.n_dim == len(self.lb) == len(self.ub), 'dim == len(lb) == len(ub) is not True'
         assert np.all(self.ub > self.lb), 'upper-bound must be greater than lower-bound'
 
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * pop)
-        self.pbest_x = self.X.copy()                    # personal best location of every particle in history
-        self.pbest_y = np.array([np.inf] * pop)         # best image of every particle in history
-        self.gbest_x = DecisionVarMean(self.pbest_x)    # global best location for all particles
-        self.gbest_y = np.inf                           # global best y for all particles
-        self.gbest_y_hist = []                          # gbest_y of every iteration
+        self.pbest_x = self.X.copy()                             # personal best location of every particle in history
+        self.pbest_y = np.array([np.inf] * pop)                  # best image of every particle in history
+        self.gbest_x = CompositeDecisionVarMean(self.pbest_x)    # global best location for all particles
+        self.gbest_y = np.inf                                    # global best y for all particles
+        self.gbest_y_hist = []                                   # gbest_y of every iteration
         
         self.update_gbest()
         self.update_coeffs()
@@ -221,31 +230,9 @@ class PSO():
         self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
         
         # support conditional variables: if kernel in the next iter is not rbf, rbf_gamma should not change
-        self.V_prev_gamma = np.copy(self.V[:, 3])  # to track previous velocity of rbf_gamma
+        self.gamma_indices = list(range(3, self.n_dim, 4))
+        self.V_prev_gamma = np.copy(self.V[:, self.gamma_indices])
 
-    # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
-    # numpy vectorization can also be used instead of list comprehension
-    def update_V(self):
-        r1 = np.random.rand(self.pop, self.n_dim)
-        r2 = np.random.rand(self.pop, self.n_dim)
-        intrm1 = np.array([self.pbest_x[i].to_array()  - self.X[i].to_array() for i in range(self.pop)])
-        intrm2 = np.array([self.gbest_x.to_array()  - self.X[i].to_array() for i in range(self.pop)])
-        self.V_prev_gamma = np.copy(self.V[:, 3])
-        self.V = self.w * self.V + \
-                 self.cp * r1 * intrm1 + \
-                 self.cg * r2 * intrm2
-                
-    # position is handled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
-    def update_X(self):
-        # self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
-        X_tmp_arr = np.array([(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
-        for i in range(self.pop):
-            if self.X[i].kernel != KernelType.RBF:
-                X_tmp_arr[i, 3] = self.X[i].rbf_gamma  # keep the same rbf_gamma if kernel is not RBF
-                self.V[i, 3] = self.V_prev_gamma[i]
-                
-        self.X = np.array([DecisionVar.from_array(X_tmp_arr[i]) for i in range(self.pop)])
-    
     def update_coeffs(self):
         if self.auto_coeffs:
             t = self.iter_num
@@ -254,71 +241,6 @@ class PSO():
             self.cp = -3 * t / n + 3.5
             self.cg =  3 * t / n + 0.5
             
-    # Use subprocess to run the job script and get the results
-    def call_scripts(self):
-        """
-        For each particle, submit an sbatch job using particle_job_base.sh,
-        passing the variables in self.X as command-line arguments.
-        Wait for all jobs to finish and collect their output as the fitness value.
-        """
-        
-        job_out_file_dir = str(os.path.join(self.save_dir, f'Iter_{self.iter_num}', ''))
-        os.makedirs(job_out_file_dir, exist_ok=True)
-        processes = []
-        job_ids = []
-        results = [0] * self.pop
-        
-        for idx, x in enumerate(self.X):
-            x = copy.copy(x)
-            x.rbf_gamma = float(x.rbf_gamma) if x.kernel == KernelType.RBF else 0.0
-            args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
-                    for key, value in vars(x).items()]
-            # I/O overhead because submit.sh reads particle_job_base.sh and writes particle_job.sh for each particle
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, './particle_job_base.sh', '/particle_job.sh']
-            
-            # Can use subprocess.PIPE for job_id only; for the rest of stdout, read the output files instead.
-            # You can use shell=True to give the whole command as a string, but it has security risks.
-            # Text=true: returns buffers in text mode, not bytes
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
-            cmd = ["sbatch", "./particle_job.sh", str(self.exec_trace_addr), str(self.configs_dir)] + args 
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
-            processes.append(proc)
-            
-            stdout = proc.stdout.readline()
-            job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
-            job_ids.append(int(job_id))
-            print("Submitting job", job_id, "with args: ", ' '.join(args))
-            
-            # Old way to read stdout and stderr after process ends (if sbatch returns right after sumbission)
-            # stdout, _ = proc.communicate()
-            # print(stdout)
-            # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
-            # job_ids.append(int(job_id))
-           
-        print("Job IDs:", job_ids)
-        
-        # Check for finished jobs by checking their output files
-        # Collect the results from each output file when it finished
-        pending = list(range(self.pop))
-        while pending:
-            for idx in pending:
-                if processes[idx].poll() is not None:  # Process finished
-                    out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx]}.out")
-                    avg, n = avg_revision_scores(out_file)
-                    print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
-                    pending.remove(idx)
-                    results[idx] = -avg # Minimize negative score (== maximize score)
-                else:
-                    time.sleep(5)
-            
-        self.Y = np.array(results)  
-        return self.Y
-    
-    # TODO: submit a job that runs particle job with the best parameters found
-    # and saves the traces and the learned model to output_dir
-    def run_for_xbest(self):
-        pass
-    
     def run_one_time_job(self):
         job_out_file_dir = str(os.path.join(self.save_dir, ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
@@ -332,21 +254,138 @@ class PSO():
         stdout = proc.stdout.readline()
         job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
         self.onetime_job_id = int(job_id)
-        print("Submitting one-time job", job_id, " for discrete variables.")
+        self.onetime_job_out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
+        print("Submitting one-time job", job_id, "for discrete variables.")
+          
+        # ...  
+        # Job will be done when we call self.onetime_process.wait() in call_scripts()
+        
+    # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf, and 2) discrete variable kernel
+    def update_V(self):
+        r1 = np.random.rand(self.pop, self.n_dim)
+        r2 = np.random.rand(self.pop, self.n_dim)
+        intrm1 = np.array([self.pbest_x[i].to_array()  - self.X[i].to_array() for i in range(self.pop)])
+        intrm2 = np.array([self.gbest_x.to_array()  - self.X[i].to_array() for i in range(self.pop)])
+        
+        # store copies of V columns at indices 3, 7, 11, ... which correspond to rbf_gamma of each DecisionVar
+        self.V_prev_gamma = np.copy(self.V[:, self.gamma_indices])
+        self.V = self.w * self.V + \
+                 self.cp * r1 * intrm1 + \
+                 self.cg * r2 * intrm2
+                
+    # position is handled for 1) rbf_gamma when kernel is not rbf 2) discrete variable kernel
+    def update_X(self):
+        # self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
+        X_tmp_arr = np.array([(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
+        for i in range(self.pop):
+            for j in self.n_opt_vars:
+                if self.X[i].decision_vars[j].kernel != KernelType.RBF:
+                    X_tmp_arr[i, self.gamma_indices[j]] = self.X[i].decision_vars[j].rbf_gamma  # keep the same rbf_gamma if kernel is not RBF
+                    self.V[i, self.gamma_indices[j]] = self.V_prev_gamma[i, j]
+                
+        self.X = np.array([CompositeDecisionVar.from_array(X_tmp_arr[i]) for i in range(self.pop)])
+                
+    # Use subprocess to run the job script and get the results
+    def call_scripts(self):
+        """
+        For each particle, submit an sbatch job using discretization_job_base.sh,
+        passing the variables in self.X as command-line arguments.
+        Wait for all jobs to finish and collect their output as the fitness value.
+        """
+        
+        job_out_file_dir = str(os.path.join(self.save_dir, f'iter_{self.iter_num}', ''))
+        os.makedirs(job_out_file_dir, exist_ok=True)
+        processes = []
+        job_ids = []
+        
+        for idx, x in enumerate(self.X):
+            x = copy.copy(x)
+            decision_vars = x.decision_vars
+            processes_per_var = []
+            job_ids_per_var = []
             
-        while True:
-            if self.onetime_process.poll() is not None:
-                #
-                # TODO: use the created zip file
-                #
-                out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
-                self.onetime_process = None
-                self.onetime_job_id = None
-                print("One-time job finished. Output file:", out_file)
-                break
-            else:
-                time.sleep(5)
+            for ith_var, decisoin_var in enumerate(decision_vars):
+                decisoin_var.rbf_gamma = float(decisoin_var.rbf_gamma) if decisoin_var.kernel == KernelType.RBF else 0.0
+                args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
+                        for key, value in vars(decisoin_var).items()]
+                
+                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', '/discretization_job.sh']
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                
+                cmd = ["sbatch", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
+                processes_per_var.append(proc)
+                
+                stdout = proc.stdout.readline()
+                job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+                job_ids_per_var.append(int(job_id))
+                print("Submitting job", job_id, "with args: ", ' '.join(args))
+                
+            processes.append(processes_per_var)
+            job_ids.append(job_ids_per_var)
             
+        # Make sure if onetime job is done (only the first time this function is called)
+        if self.onetime_process is not None:
+            self.onetime_process.wait()
+            self.onetime_process = None
+        
+        # Each particle submits multiple jobs (one per discrete variable)
+        # Check if all jobs for a particle are finished
+        # Then, call the inner loop to collect results for that particle
+        inner_loop_processes = [None] * self.pop
+        pending_particles = list(range(self.pop))
+        
+        while pending_particles:
+            for idx in pending_particles:
+                if len(processes[idx]) == 0:
+                    # All jobs in the particle are done, now call the inner loop
+                    # Call a bash script or somehow prepare the input to the learner (i.e., inner loop)
+                    # Then call the inner loop      
+                    leaner_input_filename = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
+                    cmd = ["sbatch", "./prepare_learner_input.sh", leaner_input_filename, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    proc_out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                    
+                    # Extract the learner input path from the echos of prepare_learner_input.sh
+                    learner_input_path = None
+                    for line in proc_out.stdout.splitlines():
+                        if line.startswith("Event trace path: "):
+                            learner_input_path = line[len("Event trace path: "):].strip()
+                            break
+                    
+                    p = Process(target=self.binary_psos[idx].optimize_distributed, args=(learner_input_path, os.path.join(job_out_file_dir, f"particle_{idx}")))
+                    p.start()
+                    inner_loop_processes[idx] = p    
+                    
+                    pending_particles.remove(idx)
+                    continue
+                
+                for ith_var, proc in enumerate(processes[idx]):
+                    if proc.poll() is not None:  # Process finished
+                        # out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx][ith_var]}.out")
+                        processes[idx].remove(proc)
+                    else:
+                        time.sleep(5)
+        
+        # Check for the inner loops of particles and collect their results
+        pending_particles = list(range(self.pop))
+        results = [0] * self.pop
+
+        while pending_particles:
+            for idx in pending_particles:
+                if not inner_loop_processes[idx].is_alive():  # Process finished
+                    results[idx] = self.binary_psos[idx].best_y
+                    pending_particles.remove(idx)
+                else:
+                    time.sleep(5)
+                    
+        self.Y = np.array(results)  
+        return self.Y
+    
+    # TODO: submit a job that runs particle job with the best parameters found
+    # and saves the traces and the learned model to output_dir
+    def run_for_xbest(self):
+        pass
+    
     def update_pbest(self):
         '''
         personal best
@@ -403,7 +442,6 @@ class PSO():
     
     def optimize_distributed(self):
         self.run_one_time_job()
-        exit(1)
              
         for iter_num in range(self.max_iter):
             converged = self.iterate(iter_num)

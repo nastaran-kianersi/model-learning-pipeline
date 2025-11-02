@@ -101,13 +101,20 @@ class BinaryPSO():
     movement.
 
     """
-    def __init__(self, event_trace_addr, n_dim, pop, max_iter,
+    def __init__(self, learner_args, key_prop, pop, max_iter,
                  w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, verbose=False):
 
-        self.event_trace_addr = event_trace_addr
-        self.iter_num = 0
-        self.n_dim = n_dim
+        self.learner_args = learner_args
+        self.key_prop = key_prop
+        index = self.learner_args.index(self.key_prop)   # move the key property to the end of the list
+        self.learner_args.append(self.learner_args.pop(index))
+        
+        self.n_dim = len(learner_args)  - 1   # dimension of decision variable
         self.X = np.random.choice([0, 1], size=(self.pop, self.n_dim))
+        
+        self.iter_num = 0
+        self.init_w = w
+        self.init_cp, self.init_cg = c1, c2
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
@@ -134,7 +141,12 @@ class BinaryPSO():
         self.record_value = {'X': [], 'V': [], 'Y': []}
         self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
         
-
+    def reset_iter_params(self):
+        self.iter_num = 0
+        self.w = self.init_w
+        self.cp, self.cg = self.init_cp, self.init_cg
+        self.update_coeffs()
+        
     def update_V(self):
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
@@ -147,11 +159,11 @@ class BinaryPSO():
         # Velocity clamping: ensure all velocities are at most v_max (no lower bound)
         np.minimum(self.V, self.v_max, out=self.V)
                 
-    
     def update_X(self):
         sigmoid_V = expit(self.V)
-        r = np.random.random_sample(self.pop)
-        self.X = np.where(r > sigmoid_V, 1, 0)
+        r = np.random.random_sample(size=(self.pop, self.n_dim))
+        self.X = np.where(r < sigmoid_V, 1, 0)
+        
     
     def update_coeffs(self):
         if self.auto_coeffs:
@@ -162,8 +174,8 @@ class BinaryPSO():
             self.cg =  3 * t / n + 0.5
             
     # Use subprocess to run the job script and get the results
-    def call_scripts(self, save_dir, event_trace_addr, learner_args):        
-        job_out_file_dir = str(os.path.join(save_dir, f'Iter_{self.iter_num}', ''))
+    def call_scripts(self, save_dir, event_trace_addr):        
+        job_out_file_dir = str(os.path.join(save_dir, f'inner_loop_iter_{self.iter_num}', ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
         processes = []
         job_ids = []
@@ -171,7 +183,7 @@ class BinaryPSO():
         
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
-            args = [learner_args[i] for i, val in enumerate(x) if val == 1]            
+            args = [self.learner_args[i] for i, val in enumerate(x) if val == 1] + [self.learner_args[-1]]  
             cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', '/learner_job.sh']
             
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
@@ -182,7 +194,7 @@ class BinaryPSO():
             stdout = proc.stdout.readline()
             job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_ids.append(int(job_id))
-            print("Submitting job", job_id, "with args: ", ' '.join(args))
+            print("Submitting inner job", job_id) # "with args: ", ' '.join(args))
             
         # Check for finished jobs by checking their output files
         # Collect the results from each output file when it finished
@@ -227,7 +239,7 @@ class BinaryPSO():
         self.record_value['V'].append(self.V)
         self.record_value['Y'].append(self.Y)
     
-    def iterate(self, iter_num, save_dir, event_trace_addr, learner_args):
+    def iterate(self, iter_num, save_dir, event_trace_addr):
         converged = False
         
         self.iter_num = iter_num
@@ -235,7 +247,7 @@ class BinaryPSO():
         self.update_V()
         self.recorder()
         self.update_X()
-        self.call_scripts(save_dir, event_trace_addr, learner_args) # Call the jobs and wait for them to finish, then the returned value would be the value
+        self.call_scripts(save_dir, event_trace_addr) # Call the jobs and wait for them to finish, then the returned value would be the value
                             # of y for each particle. Run a separate job for each particle.
         self.update_pbest()
         self.update_gbest()
@@ -253,9 +265,11 @@ class BinaryPSO():
             
         return converged
     
-    def optimize_distributed(self, save_dir, event_trace_addr, learner_args):
+    def optimize_distributed(self, save_dir, event_trace_addr):
+        self.reset_iter_params()
+        
         for iter_num in range(self.max_iter):
-            converged = self.iterate(iter_num, save_dir, event_trace_addr, learner_args)
+            converged = self.iterate(iter_num, save_dir, event_trace_addr)
             if converged:
                 break
             
@@ -265,8 +279,7 @@ class BinaryPSO():
     def analyze_convergence(self):
         try:
             gbest_converged = self.has_converged_gbest()
-            pos_converged, vel_converged = self.has_converged_particles()
-            return gbest_converged and (pos_converged or vel_converged)
+            return gbest_converged
         
         except Exception as e:
             traceback.print_exc()
@@ -295,34 +308,7 @@ class BinaryPSO():
         print("gbest improvement analysis:", "converged" if rel_improvement < rel_tol else "not converged")
         return rel_improvement < rel_tol
 
-    def has_converged_particles(self, tol_factor=1e-2):
-        """
-        Check convergence based on particle coalescence and velocity collapse.
-        Args:
-            tol_factor (float): Factor relative to position/velocity spread to determine convergence.
-        (Plan to) Return:
-            dict: {
-                "position_converged": bool,
-                "velocity_converged": bool
-            }
-        """
-        positions = self.X
-        velocities = self.V
-        
-        # Position convergence: low spread in particle positions
-        pos_spread = np.mean(np.std(positions))
-        pos_scale = np.mean(np.mean(np.abs(positions))) + 1e-9
-        position_converged = pos_spread / pos_scale < tol_factor
-        
-        # Velocity convergence: near-zero average velocity
-        vel_norms = np.linalg.norm(velocities, axis=1)
-        velocity_converged = np.mean(vel_norms) < tol_factor * pos_scale
-        
-        print("Convergence analysis based on position:", "converged" if position_converged else "not converged")
-        print("Convergence analysis based on velocity:", "converged" if velocity_converged else "not converged")
-        
-        return position_converged, velocity_converged
-    
+    # TODO: draw a table containing the value of each dimension for each particle over iterations
     def plot_particle_evolution(self):
         """
         For each particle, plot the evolution of each..
@@ -332,16 +318,6 @@ class BinaryPSO():
         except Exception as e:
             traceback.print_exc()
             print(f"Error plotting particle evolution: {e}")
-           
-    def plot_particle_scatter(self):
-        """
-        For each iteration, plot a scatter plot of all particles...
-        """
-        try:
-            pass            
-        except Exception as e:
-            traceback.print_exc()
-            print(f"Error plotting particle scatter: {e}")
     
     def plot_gbest_y_hist(self):
         """
@@ -355,5 +331,4 @@ class BinaryPSO():
         
     def visualize(self):
         self.plot_particle_evolution()
-        self.plot_particle_scatter()
         self.plot_gbest_y_hist()

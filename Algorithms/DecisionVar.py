@@ -155,8 +155,94 @@ class DecisionVar:
         self.rbf_gamma = np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
     
 
+# Wrapper around multiple DecisionVar instances
+class CompositeDecisionVar:
+    @staticmethod
+    def random(n_vars):
+        arrays = [DecisionVar.random() for _ in range(n_vars)]
+        return CompositeDecisionVar(arrays)
+    
+    def __init__(self, n_vars):
+        self.n_dim_per_var = DecisionVar.n_dim
+        self.n_vars = n_vars                    # Number of DecisionVar instances
+        self.n_dim = self.n_dim_per_var * self.n_vars
+        self.decision_vars = [DecisionVar.random() for _ in range(n_vars)]
+        self.lb = np.tile(DecisionVar.lb, n_vars)
+        self.ub = np.tile(DecisionVar.ub, n_vars)
+        
+    def __init__(self, decision_vars):
+        self.n_dim_per_var = DecisionVar.n_dim
+        self.n_vars = len(decision_vars)                    
+        self.n_dim = self.n_dim_per_var * self.n_vars
+        self.decision_vars = decision_vars
+        self.lb = np.tile(DecisionVar.lb, self.n_vars)
+        self.ub = np.tile(DecisionVar.ub, self.n_vars)
+    
+    @classmethod
+    def from_array(cls, arr):
+        """Initialize CompositeDecisionVar from a numpy array."""
+        n_dim_per_var = DecisionVar.n_dim
+        if len(arr) % n_dim_per_var != 0:
+            raise ValueError(f"Array length must be a multiple of {n_dim_per_var}.")
+        
+        decision_vars = []
+        for i in range(0, len(arr), n_dim_per_var):
+            var_array = arr[i:i + n_dim_per_var]
+            decision_var = DecisionVar.from_array(var_array)
+            decision_vars.append(decision_var)
+        
+        return cls(decision_vars)
+    
+    def __repr__(self):
+        return f"CompositeDecisionVar(n_vars={self.n_vars}, decision_vars={self.decision_vars})"
+    
+    def __add__(self, other):
+        if not isinstance(other, CompositeDecisionVar):
+            return NotImplemented
+        
+        if self.n_vars != other.n_vars:
+            raise ValueError("Both CompositeDecisionVar instances must have the same number of DecisionVar instances.")
+        
+        new_decision_vars = [
+            self.decision_vars[i] + other.decision_vars[i]
+            for i in range(self.n_vars)
+        ]
+        
+        return CompositeDecisionVar(new_decision_vars)
+    
+    def __sub__(self, other):
+        if not isinstance(other, CompositeDecisionVar):
+            return NotImplemented
+        
+        if self.n_vars != other.n_vars:
+            raise ValueError("Both CompositeDecisionVar instances must have the same number of DecisionVar instances.")
+        
+        new_decision_vars = [
+            self.decision_vars[i] - other.decision_vars[i]
+            for i in range(self.n_vars)
+        ]
+        
+        return CompositeDecisionVar(new_decision_vars)
+    
+    def __eq__(self, other):
+        """Overrides the default implementation"""
+        if isinstance(other, CompositeDecisionVar):
+            return all(self.decision_vars[i] == other.decision_vars[i] for i in range(self.n_vars))
+        return False
+    
+    # Instead of __array__; to avoid implicit conversion to numpy array
+    def to_array(self, dtype=None):
+        arrays = [var.to_array(dtype=dtype) for var in self.decision_vars]
+        return np.concatenate(arrays)
+    
+    def clip(self):
+        """Clip the values of all DecisionVar instances to their bounds."""
+        for var in self.decision_vars:
+            var.clip()
+    
+    
 # =========================
-# Tests
+# Helper functions
 # =========================
 
 def most_common(L):
@@ -197,23 +283,6 @@ def DecisionVarMean(decision_vars):
         kernel=KernelType(int(mean_values[2])),
         rbf_gamma=float(mean_values[3])
     )
-
-
-def Test_DecisionVarMean():
-    """Test the DecisionVar class and its methods."""
-    
-    dv1 = DecisionVar.random()
-    dv2 = DecisionVar.random()
-    
-    print("Random DecisionVars:")
-    print(dv1)
-    print(dv2)
-    
-    mean_dv = DecisionVarMean([dv1, dv2])
-    print("Mean DecisionVar:")
-    print(mean_dv)
-    
-    assert isinstance(mean_dv, DecisionVar), "Mean should be a DecisionVar instance"
     
     
 def DecisionVarStd(decision_vars):
@@ -252,6 +321,85 @@ def DecisionVarAbs(decision_vars):
     return decision_vars # since all values are positive already
     
     
+def CompositeDecisionVarMean(composite_decision_vars):
+    """Calculate the mean of a list of CompositeDecisionVar instances."""
+    if len(composite_decision_vars) == 0:
+        return None
+        
+    n_vars = composite_decision_vars[0].n_vars
+    decision_vars_per_position = [[] for _ in range(n_vars)]
+    
+    for comp_var in composite_decision_vars:
+        for i in range(n_vars):
+            decision_vars_per_position[i].append(comp_var.decision_vars[i])
+    
+    mean_decision_vars = [
+        DecisionVarMean(decision_vars_per_position[i])
+        for i in range(n_vars)
+    ]
+    
+    return CompositeDecisionVar(mean_decision_vars)
+
+
+def CompositeDecisionVarStd(composite_decision_vars):
+    """Calculate the standard deviation of a list of CompositeDecisionVar instances."""
+    if len(composite_decision_vars) == 0:
+        return None
+        
+    n_vars = composite_decision_vars[0].n_vars
+    decision_vars_per_position = [[] for _ in range(n_vars)]
+    
+    for comp_var in composite_decision_vars:
+        for i in range(n_vars):
+            decision_vars_per_position[i].append(comp_var.decision_vars[i])
+    
+    std_decision_vars = [
+        DecisionVarStd(decision_vars_per_position[i])
+        for i in range(n_vars)
+    ]
+    
+    return CompositeDecisionVar(std_decision_vars)
+
+
+def CompositeDecisionVarAbs(composite_decision_vars):
+    """Calculate the abs of a list of CompositeDecisionVar instances."""
+    if len(composite_decision_vars) == 0:
+        return None
+        
+    n_vars = composite_decision_vars[0].n_vars
+    decision_vars_per_position = [[] for _ in range(n_vars)]
+    
+    for comp_var in composite_decision_vars:
+        for i in range(n_vars):
+            decision_vars_per_position[i].append(comp_var.decision_vars[i])
+    
+    abs_decision_vars = [
+        DecisionVarAbs(decision_vars_per_position[i])
+        for i in range(n_vars)
+    ]
+    
+    return CompositeDecisionVar(abs_decision_vars)
+# =========================
+# Tests
+# =========================
+
+def Test_DecisionVarMean():
+    """Test the DecisionVar class and its methods."""
+    
+    dv1 = DecisionVar.random()
+    dv2 = DecisionVar.random()
+    
+    print("Random DecisionVars:")
+    print(dv1)
+    print(dv2)
+    
+    mean_dv = DecisionVarMean([dv1, dv2])
+    print("Mean DecisionVar:")
+    print(mean_dv)
+    
+    assert isinstance(mean_dv, DecisionVar), "Mean should be a DecisionVar instance"
+    
+    
 def Test_DecisionVarArithmetic():
     """Test arithmetic operations on DecisionVar instances."""
     
@@ -285,6 +433,4 @@ def Test_DecisionVarArithmetic():
     
     assert isinstance(sum_dv, DecisionVar), "Sum should be a DecisionVar instance"
     assert isinstance(diff_dv, DecisionVar), "Difference should be a DecisionVar instance"
-    
-    
     

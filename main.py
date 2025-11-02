@@ -1,8 +1,8 @@
-from scikit_opt_dev.sko.PSO import PSO
+from Algorithms.PSO import PSO
 import os
 from argparse import ArgumentParser
 from pathlib import Path
-from scikit_opt_dev.sko.DecisionVar import Test_DecisionVarArithmetic as dv_test
+from Algorithms.DecisionVar import Test_DecisionVarArithmetic as dv_test
 
 
 parser = ArgumentParser(description="Process Nibe data in nfer format to create time series and generate event traces.")
@@ -24,7 +24,7 @@ print(f"Output directory: {output_dir}\n\n")
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, configs_dir=configs_dir, output_dir=output_dir,
-          pop=70, max_iter=100, w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=True)
+          pop=10, max_iter=5, w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=True) #pop=100, max_iter=100
 best_x, best_y = pso.optimize_distributed()
 pso.analyze_convergence()
 print("Best solution:", best_x)
