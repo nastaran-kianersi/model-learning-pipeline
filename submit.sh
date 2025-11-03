@@ -1,6 +1,7 @@
 #!/bin/bash
 
 echo "#!/bin/bash" > $3
+# or %j
 echo "#SBATCH -o ${1}job_%A.out" >> $3
 echo "#SBATCH -e ${1}job_%A.err" >> $3
 

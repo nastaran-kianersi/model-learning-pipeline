@@ -5,6 +5,8 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import sys
+
 from .DecisionVar import *
 from .BinaryPSO import *
 import subprocess
@@ -278,7 +280,7 @@ class PSO():
         # self.X = np.array([DecisionVar.from_array(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
         X_tmp_arr = np.array([(self.X[i].to_array() + self.V[i]) for i in range(self.pop)])
         for i in range(self.pop):
-            for j in self.n_opt_vars:
+            for j in range(self.n_opt_vars):
                 if self.X[i].decision_vars[j].kernel != KernelType.RBF:
                     X_tmp_arr[i, self.gamma_indices[j]] = self.X[i].decision_vars[j].rbf_gamma  # keep the same rbf_gamma if kernel is not RBF
                     self.V[i, self.gamma_indices[j]] = self.V_prev_gamma[i, j]
@@ -309,7 +311,7 @@ class PSO():
                 args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                         for key, value in vars(decisoin_var).items()]
                 
-                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', '/discretization_job.sh']
+                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './discretization_job.sh']
                 subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
                 
                 cmd = ["sbatch", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
@@ -321,6 +323,15 @@ class PSO():
                 job_ids_per_var.append(int(job_id))
                 print("Submitting job", job_id, "with args: ", ' '.join(args))
                 
+                # while True:
+                #     stdout = proc.stdout.readline()
+                #     if stdout.strip().startswith("Submitted batch job"):
+                #         job_id = stdout.strip().split()[-1]
+                #         job_ids_per_var.append(int(job_id))
+                #         print("Submitting job", job_id, "with args: ", ' '.join(args))
+                #         break
+                    
+                                   
             processes.append(processes_per_var)
             job_ids.append(job_ids_per_var)
             
@@ -338,33 +349,30 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if len(processes[idx]) == 0:
+                    cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                
                     # All jobs in the particle are done, now call the inner loop
                     # Call a bash script or somehow prepare the input to the learner (i.e., inner loop)
-                    # Then call the inner loop      
-                    leaner_input_filename = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
-                    cmd = ["sbatch", "./prepare_learner_input.sh", leaner_input_filename, "onetime"] + [str(jid) for jid in job_ids[idx]]
-                    proc_out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                    # Then call the inner loop 
+                    leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
+                    cmd = ["sbatch", "./prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
                     
-                    # Extract the learner input path from the echos of prepare_learner_input.sh
-                    learner_input_path = None
-                    for line in proc_out.stdout.splitlines():
-                        if line.startswith("Event trace path: "):
-                            learner_input_path = line[len("Event trace path: "):].strip()
-                            break
-                    
-                    p = Process(target=self.binary_psos[idx].optimize_distributed, args=(learner_input_path, os.path.join(job_out_file_dir, f"particle_{idx}")))
+                    leaner_input_filename = leaner_input_foldername + ".zip"
+                    p = Process(target=self.binary_psos[idx].optimize_distributed, args=(os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename))
                     p.start()
-                    inner_loop_processes[idx] = p    
+                    # p.join()
+                    inner_loop_processes[idx] = p
                     
                     pending_particles.remove(idx)
-                    continue
-                
-                for ith_var, proc in enumerate(processes[idx]):
-                    if proc.poll() is not None:  # Process finished
-                        # out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx][ith_var]}.out")
-                        processes[idx].remove(proc)
-                    else:
-                        time.sleep(5)
+                else:
+                    for ith_var, proc in enumerate(processes[idx]):
+                        if proc.poll() is not None:  # Process finished
+                            # out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx][ith_var]}.out")
+                            processes[idx].remove(proc)
+                            
+                    time.sleep(5)
         
         # Check for the inner loops of particles and collect their results
         pending_particles = list(range(self.pop))
@@ -375,8 +383,8 @@ class PSO():
                 if not inner_loop_processes[idx].is_alive():  # Process finished
                     results[idx] = self.binary_psos[idx].best_y
                     pending_particles.remove(idx)
-                else:
-                    time.sleep(5)
+                
+            time.sleep(5)
                     
         self.Y = np.array(results)  
         return self.Y
@@ -392,6 +400,7 @@ class PSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
+        print("PSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
         self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
@@ -401,6 +410,7 @@ class PSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
+        print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
             self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]
@@ -416,7 +426,7 @@ class PSO():
         converged = False
         
         self.iter_num = iter_num
-        print("Iter ", iter_num, "Coeffs: w=", self.w, " cp=", self.cp, " cg=", self.cg)
+        print("Iter", iter_num, "Coeffs: w =", self.w, ", cp =", self.cp, ", cg =", self.cg)
         self.update_V()
         self.recorder()
         self.update_X()
@@ -499,8 +509,8 @@ class PSO():
         velocities = self.V
         
         # Position convergence: low spread in particle positions
-        pos_spread = np.mean(DecisionVarStd(positions).to_array())
-        pos_scale = np.mean(DecisionVarMean(DecisionVarAbs(positions)).to_array()) + 1e-9
+        pos_spread = np.mean(CompositeDecisionVarStd(positions).to_array())
+        pos_scale = np.mean(CompositeDecisionVarMean(CompositeDecisionVarAbs(positions)).to_array()) + 1e-9
         position_converged = pos_spread / pos_scale < tol_factor
         
         # Velocity convergence: near-zero average velocity

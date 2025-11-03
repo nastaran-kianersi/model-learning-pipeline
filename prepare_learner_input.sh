@@ -1,6 +1,9 @@
 #!/bin/bash
-#SBATCH --output=/dev/null
-#SBATCH --error=/dev/null
+#SBATCH -o /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/iter_4/particle_4/job_%A.out
+#SBATCH -e /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/iter_4/particle_4/job_%A.err
+#!/bin/bash
+##SBATCH --output=/dev/null
+##SBATCH --error=/dev/null
 #SBATCH -c 1
 #SBATCH --mem=50
 #SBATCH -t 0-00:05:00
@@ -23,13 +26,10 @@ fi
 infile_arg="$1"
 shift
 echo $infile_arg
-EventTraceFilename="${infile_arg#--EventTraceFilename=}"
+EventTraceFoldername="${infile_arg#--EventTraceFoldername=}"
 
 SCRATCH_DIR="/global/scratch/hpc5649"
-EventTracePath="$SCRATCH_DIR/$EventTraceFilename"
-# mkdir -p "$EventTracePath"
-# cp "$OutputPath"/* "$EventTracePath"
-# -------------------
+EventTracePath="$SCRATCH_DIR/$EventTraceFoldername"
 
 # Create the unified directory
 mkdir -p "$EventTracePath/split_with_same_suffix/continuous" 
@@ -37,7 +37,7 @@ mkdir -p "$EventTracePath/split_with_same_suffix/discrete"
 
 # Loop through provided suffixes
 for i in "$@"; do
-    dir="event_traces_${i}"
+    dir="$SCRATCH_DIR/event_traces_${i}"
 
     if [[ ! -d "$dir" ]]; then
         echo "Directory $dir does not exist, skipping."
@@ -58,5 +58,8 @@ for i in "$@"; do
 done
 
 # Zip the merged folder
-zip -r "$EventTracePath".zip "$EventTracePath"
-echo "Merged into \"$EventTracePath\".zip successfully."
+cd "$(dirname "$EventTracePath")"
+zip -r "$(basename "$EventTracePath").zip" "$(basename "$EventTracePath")"
+# zip -r "${EventTracePath}.zip" "$EventTracePath"
+rm -rf "$EventTracePath"
+echo "Event trace path: ${EventTracePath}.zip" #\"$EventTracePath\".zip"

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 1
 #SBATCH --mem=16G
-#SBATCH -t 0-00:45:00
+#SBATCH -t 0-00:20:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait
@@ -40,7 +40,7 @@ deactivate
 SCRATCH_DIR="/global/scratch/hpc5649"
 EventTracePath="$SCRATCH_DIR/event_traces_onetime/"
 mkdir -p "$EventTracePath"
-cp "$OutputPath"/* "$EventTracePath"
+cp -r "$OutputPath"/* "$EventTracePath"
 
 # Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
 # it must copy to the parent process's ./outputs, must come to this script as an input argument)

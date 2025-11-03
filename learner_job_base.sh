@@ -9,7 +9,11 @@
 infile_arg="$1"
 shift
 echo $infile_arg
-EventTracePath="${infile_arg#--EventTracePath=}"
+EventTraceFilename="${infile_arg#--EventTraceFilename=}"
+
+SCRATCH_DIR="/global/scratch/hpc5649"
+EventTracePath="$SCRATCH_DIR/$EventTraceFilename"
+echo "Full path to the event trace file: $EventTracePath"
 
 learner_args=("$@")
 echo "${learner_args[@]}"

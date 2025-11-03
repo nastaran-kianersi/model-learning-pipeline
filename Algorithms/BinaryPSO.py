@@ -109,6 +109,7 @@ class BinaryPSO():
         index = self.learner_args.index(self.key_prop)   # move the key property to the end of the list
         self.learner_args.append(self.learner_args.pop(index))
         
+        self.pop = pop  # number of particles
         self.n_dim = len(learner_args)  - 1   # dimension of decision variable
         self.X = np.random.choice([0, 1], size=(self.pop, self.n_dim))
         
@@ -118,7 +119,6 @@ class BinaryPSO():
         
         self.w = w  # inertia
         self.cp, self.cg = c1, c2  # parameters to control personal best, global best respectively
-        self.pop = pop  # number of particles
         self.max_iter = max_iter 
         self.auto_coeffs = auto_coeffs
         self.early_termination = early_termination  # whether to terminate early if converged
@@ -174,7 +174,7 @@ class BinaryPSO():
             self.cg =  3 * t / n + 0.5
             
     # Use subprocess to run the job script and get the results
-    def call_scripts(self, save_dir, event_trace_addr):        
+    def call_scripts(self, save_dir, event_trace_filename):        
         job_out_file_dir = str(os.path.join(save_dir, f'inner_loop_iter_{self.iter_num}', ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
         processes = []
@@ -184,10 +184,10 @@ class BinaryPSO():
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
             args = [self.learner_args[i] for i, val in enumerate(x) if val == 1] + [self.learner_args[-1]]  
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', '/learner_job.sh']
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', './learner_job.sh']
             
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
-            cmd = ["sbatch", "./learner_job.sh", str(event_trace_addr)] + args 
+            cmd = ["sbatch", "./learner_job.sh", str(event_trace_filename)] + args 
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
             processes.append(proc)
             
@@ -207,8 +207,8 @@ class BinaryPSO():
                     print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
                     pending.remove(idx)
                     results[idx] = -avg # Minimize negative score (== maximize score)
-                else:
-                    time.sleep(5)
+                
+            time.sleep(5)
             
         self.Y = np.array(results)  
         return self.Y
@@ -219,8 +219,9 @@ class BinaryPSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
-        self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
+        print("BinaryPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
+        self.pbest_x = np.where(self.need_update[:, np.newaxis], self.X, self.pbest_x)
+        self.pbest_y = np.where(self.need_update[:, np.newaxis], self.Y, self.pbest_y)
 
     def update_gbest(self):
         '''
@@ -228,6 +229,7 @@ class BinaryPSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
+        print("BinaryPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
             self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]
@@ -239,15 +241,15 @@ class BinaryPSO():
         self.record_value['V'].append(self.V)
         self.record_value['Y'].append(self.Y)
     
-    def iterate(self, iter_num, save_dir, event_trace_addr):
+    def iterate(self, iter_num, save_dir, event_trace_filename):
         converged = False
         
         self.iter_num = iter_num
-        print("Iter ", iter_num, "Coeffs: w=", self.w, " cp=", self.cp, " cg=", self.cg)
+        print("Iter", iter_num, "Coeffs: w =", self.w, ", cp =", self.cp, ", cg =", self.cg)
         self.update_V()
         self.recorder()
         self.update_X()
-        self.call_scripts(save_dir, event_trace_addr) # Call the jobs and wait for them to finish, then the returned value would be the value
+        self.call_scripts(save_dir, event_trace_filename) # Call the jobs and wait for them to finish, then the returned value would be the value
                             # of y for each particle. Run a separate job for each particle.
         self.update_pbest()
         self.update_gbest()
@@ -265,11 +267,11 @@ class BinaryPSO():
             
         return converged
     
-    def optimize_distributed(self, save_dir, event_trace_addr):
+    def optimize_distributed(self, save_dir, event_trace_filename):
         self.reset_iter_params()
         
         for iter_num in range(self.max_iter):
-            converged = self.iterate(iter_num, save_dir, event_trace_addr)
+            converged = self.iterate(iter_num, save_dir, event_trace_filename)
             if converged:
                 break
             
