@@ -1,4 +1,5 @@
-from Algorithms.PSO import PSO
+from Algorithms.PSO import PSO, parse_property_file
+from Algorithms.BinaryPSO import BinaryPSO
 import os
 from argparse import ArgumentParser
 from pathlib import Path
@@ -19,6 +20,29 @@ os.makedirs(output_dir, exist_ok=True)
 print(f"Execution trace address: {exec_trace_addr}")
 print(f"Output directory: {output_dir}\n\n")
 
+## ------- BinPSO test -------
+# with open(os.path.join(configs_dir, 'key_prop.txt'), 'r') as f:
+#     key_prop = f.read().strip()
+    
+# _, onetime_props = parse_property_file(os.path.join(configs_dir, 'onetime_props.prop'))
+# continuous_props, _ = parse_property_file(os.path.join(configs_dir, 'optimizing_props.prop'))
+# for i, prop in enumerate(continuous_props):
+#     fname = os.path.join(configs_dir, f"optimizing_props_{i}.prop")
+#     with open(fname, "w") as fh:
+#         fh.write(f"{prop}, continuous\n")
+    
+# print("onetime props:", onetime_props)
+# print("continuous props:", continuous_props)
+# print("key prop:", key_prop, "\n\n")
+
+# all_props = onetime_props + continuous_props
+# bin_pso_pop      = 10 #30
+# bin_pso_max_iter = 20 #50
+# binary_psos = BinaryPSO(all_props, key_prop, bin_pso_pop, bin_pso_max_iter)
+
+# binary_psos.optimize_distributed('./', "event_traces.zip")
+## -------------------------
+
 # exec_trace_addr is the input directory
 # output_dir is the output directory
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
@@ -30,6 +54,6 @@ pso.analyze_convergence()
 print("Best solution:", best_x)
 print("Best objective value:", best_y)
 
-pso.visualize()
+# pso.visualize()
 pso.run_for_xbest()
 

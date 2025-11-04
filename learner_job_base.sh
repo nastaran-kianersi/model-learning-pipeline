@@ -14,6 +14,7 @@ EventTraceFilename="${infile_arg#--EventTraceFilename=}"
 SCRATCH_DIR="/global/scratch/hpc5649"
 EventTracePath="$SCRATCH_DIR/$EventTraceFilename"
 echo "Full path to the event trace file: $EventTracePath"
+# TODO: should I copy the input file from scratch memmory to $TMPDIR? 
 
 learner_args=("$@")
 echo "${learner_args[@]}"

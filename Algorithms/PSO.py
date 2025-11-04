@@ -187,8 +187,8 @@ class PSO():
                 fh.write(f"{prop}, continuous\n")
             
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 20 #30
-        bin_pso_max_iter = 30 #50
+        bin_pso_pop      = 10 #30
+        bin_pso_max_iter = 20 #50
         # create an array of BinaryPSO instances (one per particle)
         self.binary_psos = np.array(
             [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
@@ -266,8 +266,8 @@ class PSO():
     def update_V(self):
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
-        intrm1 = np.array([self.pbest_x[i].to_array()  - self.X[i].to_array() for i in range(self.pop)])
-        intrm2 = np.array([self.gbest_x.to_array()  - self.X[i].to_array() for i in range(self.pop)])
+        intrm1 = np.array([self.pbest_x[i].to_array() - self.X[i].to_array() for i in range(self.pop)])
+        intrm2 = np.array([self.gbest_x.to_array() - self.X[i].to_array() for i in range(self.pop)])
         
         # store copies of V columns at indices 3, 7, 11, ... which correspond to rbf_gamma of each DecisionVar
         self.V_prev_gamma = np.copy(self.V[:, self.gamma_indices])
@@ -330,8 +330,7 @@ class PSO():
                 #         job_ids_per_var.append(int(job_id))
                 #         print("Submitting job", job_id, "with args: ", ' '.join(args))
                 #         break
-                    
-                                   
+                
             processes.append(processes_per_var)
             job_ids.append(job_ids_per_var)
             

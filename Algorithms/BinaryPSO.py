@@ -18,6 +18,8 @@ from pathlib import Path
 from datetime import datetime
 import traceback
 
+from .DecisionVar import *
+
 
 HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
 REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
@@ -111,8 +113,7 @@ class BinaryPSO():
         
         self.pop = pop  # number of particles
         self.n_dim = len(learner_args)  - 1   # dimension of decision variable
-        self.X = np.random.choice([0, 1], size=(self.pop, self.n_dim))
-        
+        self.X = np.array([BinaryDecisionVar.random(self.n_dim) for _ in range(pop)])    #np.random.choice([0, 1], size=(self.pop, self.n_dim))
         self.iter_num = 0
         self.init_w = w
         self.init_cp, self.init_cg = c1, c2
@@ -129,7 +130,8 @@ class BinaryPSO():
         self.Y = np.array([0] * pop)
         self.pbest_x = self.X.copy()                    # personal best location of every particle in history
         self.pbest_y = np.array([np.inf] * pop)         # best image of every particle in history
-        self.gbest_x = np.mean(self.pbest_x)    # global best location for all particles
+        # self.pbest_x[np.random.randint(self.pop)]
+        self.gbest_x = BinaryDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].arr for i in range(pop)]), axis=0)))
         self.gbest_y = np.inf                           # global best y for all particles
         self.gbest_y_hist = []                          # gbest_y of every iteration
         
@@ -150,8 +152,9 @@ class BinaryPSO():
     def update_V(self):
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
-        intrm1 = self.pbest_x - self.X
-        intrm2 = self.gbest_x - self.X
+        intrm1 = np.array([self.pbest_x[i].arr  - self.X[i].arr for i in range(self.pop)])
+        intrm2 = np.array([self.gbest_x.arr  - self.X[i].arr for i in range(self.pop)])
+        
         self.V = self.w * self.V + \
                  self.cp * r1 * intrm1 + \
                  self.cg * r2 * intrm2
@@ -162,9 +165,10 @@ class BinaryPSO():
     def update_X(self):
         sigmoid_V = expit(self.V)
         r = np.random.random_sample(size=(self.pop, self.n_dim))
-        self.X = np.where(r < sigmoid_V, 1, 0)
+        tmp_X = np.array([copy.copy(self.X[i].arr) for i in range(self.pop)])
+        tmp_X = np.where(r < sigmoid_V, 1, 0)
+        self.X = np.array([BinaryDecisionVar.from_array(tmp_X[i]) for i in range(self.pop)])
         
-    
     def update_coeffs(self):
         if self.auto_coeffs:
             t = self.iter_num
@@ -183,10 +187,10 @@ class BinaryPSO():
         
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
-            args = [self.learner_args[i] for i, val in enumerate(x) if val == 1] + [self.learner_args[-1]]  
+            args = [self.learner_args[i] for i, val in enumerate(x.arr) if val == 1] + [self.learner_args[-1]]  
             cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', './learner_job.sh']
-            
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+            
             cmd = ["sbatch", "./learner_job.sh", str(event_trace_filename)] + args 
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
             processes.append(proc)
@@ -219,9 +223,10 @@ class BinaryPSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        print("BinaryPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
-        self.pbest_x = np.where(self.need_update[:, np.newaxis], self.X, self.pbest_x)
-        self.pbest_y = np.where(self.need_update[:, np.newaxis], self.Y, self.pbest_y)
+        # print("BinaryPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
+        # [:, np.newaxis]
+        self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
+        self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
     def update_gbest(self):
         '''
@@ -229,7 +234,7 @@ class BinaryPSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
-        print("BinaryPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
+        # print("BinaryPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
             self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]
@@ -269,8 +274,10 @@ class BinaryPSO():
     
     def optimize_distributed(self, save_dir, event_trace_filename):
         self.reset_iter_params()
+        print("BinaryPSO: max_iter:", self.max_iter, "pop:", self.pop)
         
         for iter_num in range(self.max_iter):
+            print("BinaryPSO iteration:", iter_num)
             converged = self.iterate(iter_num, save_dir, event_trace_filename)
             if converged:
                 break

@@ -5,6 +5,26 @@ import itertools
 import operator
 
 
+class BinaryDecisionVar:
+    def __init__(self, n_dim):
+        self.n_dim = n_dim
+        # self.arr = np.random.randint(0, 2, size=n_dim)  # Random binary values (0 or 1)
+        self.arr = np.random.choice([0, 1], size=n_dim)
+    
+    @staticmethod
+    def random(n_dim):
+        return BinaryDecisionVar(n_dim)
+    
+    @classmethod
+    def from_array(cls, arr):
+        instance = cls(len(arr))
+        instance.arr = arr
+        return instance
+    
+    def __repr__(self):
+        return f"BinaryDecisionVar(arr={self.arr})"
+    
+    
 class KernelType(Enum):
     LINEAR = 0
     RBF = 1
@@ -159,16 +179,8 @@ class DecisionVar:
 class CompositeDecisionVar:
     @staticmethod
     def random(n_vars):
-        arrays = [DecisionVar.random() for _ in range(n_vars)]
-        return CompositeDecisionVar(arrays)
-    
-    def __init__(self, n_vars):
-        self.n_dim_per_var = DecisionVar.n_dim
-        self.n_vars = n_vars                    # Number of DecisionVar instances
-        self.n_dim = self.n_dim_per_var * self.n_vars
-        self.decision_vars = [DecisionVar.random() for _ in range(n_vars)]
-        self.lb = np.tile(DecisionVar.lb, n_vars)
-        self.ub = np.tile(DecisionVar.ub, n_vars)
+        decision_vars = [DecisionVar.random() for _ in range(n_vars)]
+        return CompositeDecisionVar(decision_vars)
         
     def __init__(self, decision_vars):
         self.n_dim_per_var = DecisionVar.n_dim
@@ -178,6 +190,7 @@ class CompositeDecisionVar:
         self.lb = np.tile(DecisionVar.lb, self.n_vars)
         self.ub = np.tile(DecisionVar.ub, self.n_vars)
     
+    # convert from fully flattened array
     @classmethod
     def from_array(cls, arr):
         """Initialize CompositeDecisionVar from a numpy array."""
@@ -231,6 +244,7 @@ class CompositeDecisionVar:
         return False
     
     # Instead of __array__; to avoid implicit conversion to numpy array
+    # fully flatten: convert each decision var to array and concatenate (turn to 1d array)
     def to_array(self, dtype=None):
         arrays = [var.to_array(dtype=dtype) for var in self.decision_vars]
         return np.concatenate(arrays)
@@ -366,19 +380,21 @@ def CompositeDecisionVarAbs(composite_decision_vars):
     if len(composite_decision_vars) == 0:
         return None
         
-    n_vars = composite_decision_vars[0].n_vars
-    decision_vars_per_position = [[] for _ in range(n_vars)]
+    # n_vars = composite_decision_vars[0].n_vars
+    # decision_vars_per_position = [[] for _ in range(n_vars)]
     
-    for comp_var in composite_decision_vars:
-        for i in range(n_vars):
-            decision_vars_per_position[i].append(comp_var.decision_vars[i])
+    # for comp_var in composite_decision_vars:
+    #     for i in range(n_vars):
+    #         decision_vars_per_position[i].append(comp_var.decision_vars[i])
     
-    abs_decision_vars = [
-        DecisionVarAbs(decision_vars_per_position[i])
-        for i in range(n_vars)
-    ]
+    # abs_decision_vars = [
+    #     DecisionVarAbs(decision_vars_per_position[i])
+    #     for i in range(n_vars)
+    # ]
     
-    return CompositeDecisionVar(abs_decision_vars)
+    # return CompositeDecisionVar(abs_decision_vars)
+    return composite_decision_vars  # since all values are positive already
+
 # =========================
 # Tests
 # =========================
