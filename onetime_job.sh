@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -o /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/job_%A.out
-#SBATCH -e /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/job_%A.err
+#SBATCH -o /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-10_at_17-31-57/job_%A.out
+#SBATCH -e /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-10_at_17-31-57/job_%A.err
 #!/bin/bash
 #SBATCH -c 1
 #SBATCH --mem=16G

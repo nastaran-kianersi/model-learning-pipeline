@@ -1,7 +1,6 @@
 #!/bin/bash
-#SBATCH -o /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/iter_4/particle_4/job_%A.out
-#SBATCH -e /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-02_at_22-22-31/iter_4/particle_4/job_%A.err
-#!/bin/bash
+#SBATCH -o /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-10_at_17-31-57/iter_4/particle_4/job_%A.out
+#SBATCH -e /global/home/hpc5649/HPM_Pipeline/hpm_pipeline/outputs/run_2025-11-10_at_17-31-57/iter_4/particle_4/job_%A.err
 ##SBATCH --output=/dev/null
 ##SBATCH --error=/dev/null
 #SBATCH -c 1

@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 import traceback
 
+from . import utils
 from .DecisionVar import *
 
 
@@ -178,34 +179,41 @@ class BinaryPSO():
             self.cg =  3 * t / n + 0.5
             
     # Use subprocess to run the job script and get the results
-    def call_scripts(self, save_dir, event_trace_filename):        
+    def call_scripts(self, save_dir, event_trace_filename, parent_particle_idx):        
         job_out_file_dir = str(os.path.join(save_dir, f'inner_loop_iter_{self.iter_num}', ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
-        processes = []
         job_ids = []
         results = [0] * self.pop
         
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
             args = [self.learner_args[i] for i, val in enumerate(x.arr) if val == 1] + [self.learner_args[-1]]  
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', './learner_job.sh']
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
+            subprocess.run(cmd)
             
-            cmd = ["sbatch", "./learner_job.sh", str(event_trace_filename)] + args 
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
-            processes.append(proc)
-            
-            stdout = proc.stdout.readline()
-            job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+            cmd = ["sbatch", "--parsable", f"./learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + args 
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
+           
+            # stdout = proc.stdout.readline()
+            # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+            job_id = proc.stdout.strip()
+            print("Submitting inner job", job_id, "with args:", args)
             job_ids.append(int(job_id))
-            print("Submitting inner job", job_id) # "with args: ", ' '.join(args))
             
         # Check for finished jobs by checking their output files
         # Collect the results from each output file when it finished
         pending = list(range(self.pop))
         while pending:
             for idx in pending:
-                if processes[idx].poll() is not None:  # Process finished
+                # state = subprocess.run(
+                #                 ["sacct", "-j", str(job_ids[idx]), "--noheader", "--format=State"],
+                #                 capture_output=True, text=True
+                #             )
+                # print(state)
+                # .stdout.strip().splitlines()[-1].strip()
+                state = utils.get_job_state(job_ids[idx])
+                
+                if state == 'COMPLETED':        
                     out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx]}.out")
                     avg, n = avg_revision_scores(out_file)
                     print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
@@ -246,7 +254,7 @@ class BinaryPSO():
         self.record_value['V'].append(self.V)
         self.record_value['Y'].append(self.Y)
     
-    def iterate(self, iter_num, save_dir, event_trace_filename):
+    def iterate(self, iter_num, save_dir, event_trace_filename, parent_particle_idx):
         converged = False
         
         self.iter_num = iter_num
@@ -254,7 +262,7 @@ class BinaryPSO():
         self.update_V()
         self.recorder()
         self.update_X()
-        self.call_scripts(save_dir, event_trace_filename) # Call the jobs and wait for them to finish, then the returned value would be the value
+        self.call_scripts(save_dir, event_trace_filename, parent_particle_idx) # Call the jobs and wait for them to finish, then the returned value would be the value
                             # of y for each particle. Run a separate job for each particle.
         self.update_pbest()
         self.update_gbest()
@@ -272,18 +280,18 @@ class BinaryPSO():
             
         return converged
     
-    def optimize_distributed(self, save_dir, event_trace_filename):
+    def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx):
         self.reset_iter_params()
         print("BinaryPSO: max_iter:", self.max_iter, "pop:", self.pop)
         
         for iter_num in range(self.max_iter):
             print("BinaryPSO iteration:", iter_num)
-            converged = self.iterate(iter_num, save_dir, event_trace_filename)
+            converged = self.iterate(iter_num, save_dir, event_trace_filename, parent_particle_idx)
             if converged:
                 break
             
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
-        return self.best_x, self.best_y
+        return self #self.best_x, self.best_y
     
     def analyze_convergence(self):
         try:

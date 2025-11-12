@@ -7,10 +7,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 
+from . import utils
 from .DecisionVar import *
 from .BinaryPSO import *
 import subprocess
-from multiprocessing import Process
+from multiprocessing import Process, Manager, Pipe
 import time
 import os
 import copy
@@ -55,6 +56,20 @@ def parse_property_file(filepath):
                 print(f"Failed to parse line '{line}': {e}")
 
     return sorted(list(continuous)), sorted(list(discrete))
+
+
+def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, conn, *args):
+    # Redirect stdout to the pipe's connection
+    original_stdout = sys.stdout
+    sys.stdout = conn
+    
+    # bin_pso = copy.deepcopy(bin_pso_obj)
+    return_dict[procnum] = bin_pso_obj.optimize_distributed(*args)
+    
+    sys.stdout.flush()           # Ensure all buffered output is sent through the pipe
+    conn.close()                 # Close the writing end of the pipe
+    sys.stdout = original_stdout # Restore original stdout
+
 
 class PSO():
     """
@@ -248,7 +263,7 @@ class PSO():
         os.makedirs(job_out_file_dir, exist_ok=True)
         
         cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './onetime_job.sh']
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # waits for the job to be submitted
+        subprocess.run(cmd)         # waits for the job to be submitted
         cmd = ["sbatch", "./onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
         self.onetime_process = proc
@@ -258,7 +273,14 @@ class PSO():
         self.onetime_job_id = int(job_id)
         self.onetime_job_out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
         print("Submitting one-time job", job_id, "for discrete variables.")
-          
+            
+        # while True:
+        #     stdout = proc.stdout.readline()
+        #     if stdout.strip().startswith("Submitted batch job"):
+        #         job_id = stdout.strip().split()[-1]
+        #         job_ids_per_var.append(int(job_id))
+        #         print("Submitting job", job_id, "with args: ", ' '.join(args))
+        #         break
         # ...  
         # Job will be done when we call self.onetime_process.wait() in call_scripts()
         
@@ -297,13 +319,11 @@ class PSO():
         
         job_out_file_dir = str(os.path.join(self.save_dir, f'iter_{self.iter_num}', ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
-        processes = []
         job_ids = []
         
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
             decision_vars = x.decision_vars
-            processes_per_var = []
             job_ids_per_var = []
             
             for ith_var, decisoin_var in enumerate(decision_vars):
@@ -312,26 +332,15 @@ class PSO():
                         for key, value in vars(decisoin_var).items()]
                 
                 cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './discretization_job.sh']
-                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                subprocess.run(cmd)
                 
-                cmd = ["sbatch", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
-                processes_per_var.append(proc)
+                cmd = ["sbatch", "--parsable", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
                 
-                stdout = proc.stdout.readline()
-                job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
+                job_id = proc.stdout.strip()
                 job_ids_per_var.append(int(job_id))
                 print("Submitting job", job_id, "with args: ", ' '.join(args))
                 
-                # while True:
-                #     stdout = proc.stdout.readline()
-                #     if stdout.strip().startswith("Submitted batch job"):
-                #         job_id = stdout.strip().split()[-1]
-                #         job_ids_per_var.append(int(job_id))
-                #         print("Submitting job", job_id, "with args: ", ' '.join(args))
-                #         break
-                
-            processes.append(processes_per_var)
             job_ids.append(job_ids_per_var)
             
         # Make sure if onetime job is done (only the first time this function is called)
@@ -345,33 +354,40 @@ class PSO():
         inner_loop_processes = [None] * self.pop
         pending_particles = list(range(self.pop))
         
+        pipes = {}          # Dictionary to hold the read ends of the pipes
+        manager = Manager()
+        return_dict = manager.dict()
+    
         while pending_particles:
             for idx in pending_particles:
-                if len(processes[idx]) == 0:
+                if len(job_ids[idx]) == 0:
                     cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
-                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
+                    subprocess.run(cmd)
                 
                     # All jobs in the particle are done, now call the inner loop
-                    # Call a bash script or somehow prepare the input to the learner (i.e., inner loop)
+                    # Call an sbatch script to prepare the input to the learner (i.e., inner loop)
                     # Then call the inner loop 
                     leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
-                    cmd = ["sbatch", "./prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    cmd = ["sbatch", "--quiet", "./prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
-                    
                     leaner_input_filename = leaner_input_foldername + ".zip"
-                    p = Process(target=self.binary_psos[idx].optimize_distributed, args=(os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename))
-                    p.start()
-                    # p.join()
-                    inner_loop_processes[idx] = p
                     
+                    parent_conn, child_conn = Pipe()
+                    pipes[idx] = parent_conn # Store the read end for later
+                    p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                    p.start()
+                    inner_loop_processes[idx] = p
+                    child_conn.close() # Close the child's write end in the parent process (it's copied to the child)
+    
                     pending_particles.remove(idx)
                 else:
-                    for ith_var, proc in enumerate(processes[idx]):
-                        if proc.poll() is not None:  # Process finished
-                            # out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx][ith_var]}.out")
-                            processes[idx].remove(proc)
+                    for job_id in job_ids[idx]:
+                        state = utils.get_job_state(job_id)
+                        if state == 'COMPLETED':
+                            job_ids[idx].remove(job_id)
                             
-                    time.sleep(5)
+                                        
+            time.sleep(5)
         
         # Check for the inner loops of particles and collect their results
         pending_particles = list(range(self.pop))
@@ -380,8 +396,18 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if not inner_loop_processes[idx].is_alive():  # Process finished
+                    # results[idx] = self.binary_psos[idx].best_y
+                    self.binary_psos[idx] = return_dict[idx]
                     results[idx] = self.binary_psos[idx].best_y
                     pending_particles.remove(idx)
+                    
+                    p_conn = pipes.get(idx)
+                    if p_conn.poll(timeout=None):  # Check if there's output to read
+                        inner_loop_prints = p_conn.recv()
+                        print(f"Information from BinPSO particle {idx} inner loop:\n{inner_loop_prints}")
+                        del pipes[idx] # Remove from dictionary
+                        
+                    print("----- Results from BinPSO particle", idx, ": iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", self.binary_psos[idx].best_x, "-----")
                 
             time.sleep(5)
                     
@@ -399,7 +425,7 @@ class PSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        print("PSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
+        # print("PSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
         self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
@@ -409,7 +435,7 @@ class PSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
-        print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
+        # print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
             self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]

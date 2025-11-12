@@ -1,10 +1,9 @@
-#!/bin/bash
 #SBATCH -c 2
 #SBATCH --mem=3G
 #SBATCH -t 0-00:08:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-#SBATCH --wait
+##SBATCH --wait
 
 infile_arg="$1"
 shift

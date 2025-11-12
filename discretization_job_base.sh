@@ -1,10 +1,9 @@
-#!/bin/bash
 #SBATCH -c 1
 #SBATCH --mem=15G
 #SBATCH -t 0-00:40:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-#SBATCH --wait
+##SBATCH --wait
 # use sbatch --unbuffered to get the outputs in real-time (but it will bread the Pipeline)
 
 # Disable Python output buffering to ensure real-time logging
