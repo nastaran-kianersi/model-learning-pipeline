@@ -72,7 +72,7 @@ def avg_revision_scores(path):
 
 
 class BinaryPSO():
-    """
+    r"""
     Binary PSO (Particle swarm optimization) algorithm.
 
     This code is derived from scikit-opt library and tailored specifically for optimizating
@@ -197,7 +197,7 @@ class BinaryPSO():
             # stdout = proc.stdout.readline()
             # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_id = proc.stdout.strip()
-            print("Submitting inner job", job_id, "with args:", args)
+            print(f"Submitting inner job {job_id} with args: {args}")
             job_ids.append(int(job_id))
             
         # Check for finished jobs by checking their output files
@@ -205,15 +205,7 @@ class BinaryPSO():
         pending = list(range(self.pop))
         while pending:
             for idx in pending:
-                # state = subprocess.run(
-                #                 ["sacct", "-j", str(job_ids[idx]), "--noheader", "--format=State"],
-                #                 capture_output=True, text=True
-                #             )
-                # print(state)
-                # .stdout.strip().splitlines()[-1].strip()
-                state = utils.get_job_state(job_ids[idx])
-                
-                if state == 'COMPLETED':        
+                if utils.is_job_completed_sacct(job_ids[idx]):     
                     out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx]}.out")
                     avg, n = avg_revision_scores(out_file)
                     print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
@@ -258,7 +250,7 @@ class BinaryPSO():
         converged = False
         
         self.iter_num = iter_num
-        print("Iter", iter_num, "Coeffs: w =", self.w, ", cp =", self.cp, ", cg =", self.cg)
+        print(f"Iter {iter_num}, Coeffs: w = {self.w}, cp = {self.cp}, cg = {self.cg}")
         self.update_V()
         self.recorder()
         self.update_X()
@@ -282,10 +274,10 @@ class BinaryPSO():
     
     def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx):
         self.reset_iter_params()
-        print("BinaryPSO: max_iter:", self.max_iter, "pop:", self.pop)
+        print(f"BinaryPSO: max_iter: {self.max_iter}, pop: {self.pop}")
         
         for iter_num in range(self.max_iter):
-            print("BinaryPSO iteration:", iter_num)
+            print(f"BinaryPSO iteration: {iter_num}")
             converged = self.iterate(iter_num, save_dir, event_trace_filename, parent_particle_idx)
             if converged:
                 break
@@ -322,7 +314,8 @@ class BinaryPSO():
         scale = max(abs(past), 1.0)  # avoid division by zero
         rel_improvement = improvement / scale
         
-        print("gbest improvement analysis:", "converged" if rel_improvement < rel_tol else "not converged")
+        status = "converged" if rel_improvement < rel_tol else "not converged"
+        print(f"gbest improvement analysis: {status}")
         return rel_improvement < rel_tol
 
     # TODO: draw a table containing the value of each dimension for each particle over iterations

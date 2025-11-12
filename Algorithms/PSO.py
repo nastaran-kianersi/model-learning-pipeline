@@ -12,6 +12,8 @@ from .DecisionVar import *
 from .BinaryPSO import *
 import subprocess
 from multiprocessing import Process, Manager, Pipe
+from io import StringIO
+
 import time
 import os
 import copy
@@ -58,21 +60,32 @@ def parse_property_file(filepath):
     return sorted(list(continuous)), sorted(list(discrete))
 
 
-def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, conn, *args):
+# Helper (wrapper) class to redirect stdout to a pipe
+class TeeOut(StringIO):
+    def __init__(self, pipe, std=sys.__stdout__):
+        self.pipe = pipe
+
+    def write(self, s):
+        self.pipe.send(s.strip())
+        
+
+def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, pipe, *args):
     # Redirect stdout to the pipe's connection
-    original_stdout = sys.stdout
-    sys.stdout = conn
+    sys.stdout = TeeOut(pipe, std=sys.__stdout__)
+    sys.stderr = TeeOut(pipe, std=sys.__stderr__)
     
     # bin_pso = copy.deepcopy(bin_pso_obj)
     return_dict[procnum] = bin_pso_obj.optimize_distributed(*args)
     
     sys.stdout.flush()           # Ensure all buffered output is sent through the pipe
-    conn.close()                 # Close the writing end of the pipe
-    sys.stdout = original_stdout # Restore original stdout
+    sys.stderr.flush()
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    # pipe.close()                 # Close the writing end of the pipe
 
 
 class PSO():
-    """
+    r"""
     PSO (Particle swarm optimization) algorithm.
 
     This code is derived from scikit-opt library and tailored specifically for optimizating
@@ -202,8 +215,8 @@ class PSO():
                 fh.write(f"{prop}, continuous\n")
             
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 10 #30
-        bin_pso_max_iter = 20 #50
+        bin_pso_pop      = 5 #30
+        bin_pso_max_iter = 8 #50
         # create an array of BinaryPSO instances (one per particle)
         self.binary_psos = np.array(
             [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
@@ -320,11 +333,13 @@ class PSO():
         job_out_file_dir = str(os.path.join(self.save_dir, f'iter_{self.iter_num}', ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
         job_ids = []
+        processes = []
         
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
             decision_vars = x.decision_vars
-            job_ids_per_var = []
+            job_ids_per_var = []            
+            processes_per_var = []
             
             for ith_var, decisoin_var in enumerate(decision_vars):
                 decisoin_var.rbf_gamma = float(decisoin_var.rbf_gamma) if decisoin_var.kernel == KernelType.RBF else 0.0
@@ -336,12 +351,14 @@ class PSO():
                 
                 cmd = ["sbatch", "--parsable", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
                 proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
+                processes_per_var.append(proc)
                 
                 job_id = proc.stdout.strip()
                 job_ids_per_var.append(int(job_id))
                 print("Submitting job", job_id, "with args: ", ' '.join(args))
                 
             job_ids.append(job_ids_per_var)
+            processes.append(processes_per_var)
             
         # Make sure if onetime job is done (only the first time this function is called)
         if self.onetime_process is not None:
@@ -360,7 +377,7 @@ class PSO():
     
         while pending_particles:
             for idx in pending_particles:
-                if len(job_ids[idx]) == 0:
+                if len(processes[idx]) == 0:
                     cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
                     subprocess.run(cmd)
                 
@@ -381,10 +398,10 @@ class PSO():
     
                     pending_particles.remove(idx)
                 else:
-                    for job_id in job_ids[idx]:
-                        state = utils.get_job_state(job_id)
-                        if state == 'COMPLETED':
-                            job_ids[idx].remove(job_id)
+                    # print("Checking jobs for particle", idx, ":", job_ids[idx])
+                    for ith_var, proc in enumerate(processes[idx]):
+                        if utils.is_job_completed_sacct(job_ids[idx][ith_var]):
+                            processes[idx].remove(proc)
                             
                                         
             time.sleep(5)
@@ -395,18 +412,23 @@ class PSO():
 
         while pending_particles:
             for idx in pending_particles:
+                print(f" ***** ***** Information from BinPSO particle {idx} inner loop ***** *****")
+                while True:
+                    try:
+                        recv = pipes[idx].recv().strip()
+                        if recv:
+                            print(recv)
+                    except EOFError:
+                        print('\n')
+                        break
+                    
                 if not inner_loop_processes[idx].is_alive():  # Process finished
+                    # print("Inner process for BinPSO particle", idx, "has finished.")
                     # results[idx] = self.binary_psos[idx].best_y
                     self.binary_psos[idx] = return_dict[idx]
                     results[idx] = self.binary_psos[idx].best_y
                     pending_particles.remove(idx)
-                    
-                    p_conn = pipes.get(idx)
-                    if p_conn.poll(timeout=None):  # Check if there's output to read
-                        inner_loop_prints = p_conn.recv()
-                        print(f"Information from BinPSO particle {idx} inner loop:\n{inner_loop_prints}")
-                        del pipes[idx] # Remove from dictionary
-                        
+                    del pipes[idx]
                     print("----- Results from BinPSO particle", idx, ": iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", self.binary_psos[idx].best_x, "-----")
                 
             time.sleep(5)
