@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -c 1
-#SBATCH --mem=16G
+#SBATCH --mem=15G
 #SBATCH -t 0-00:20:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
@@ -32,7 +32,10 @@ cd nfer_format_compatibility
 echo "The actual script started running at: $(date)"
 cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
 cp "$config_dir/onetime_props.prop" "$TMPDIR"/onetime_props.prop
-OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$TMPDIR"/onetime_props.prop --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --split-time "08:00" | tail -n 1)
+# --split-time "08:00"
+# OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$TMPDIR"/onetime_props.prop --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" | tail -n 1)
+uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$TMPDIR"/onetime_props.prop --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris"
+OutputPath=$(cat /tmp/output_path.txt)
 echo "Discretization output path: $OutputPath"
 deactivate
 
@@ -42,9 +45,7 @@ EventTracePath="$SCRATCH_DIR/event_traces_onetime/"
 mkdir -p "$EventTracePath"
 cp -r "$OutputPath"/* "$EventTracePath"
 
-# Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
-# it must copy to the parent process's ./outputs, must come to this script as an input argument)
-# cp -r "$TMPDIR/CPD_Analysis_Outputs/" ./outputs/
-# cp "$EventTracePath" ./outputs/event_traces_onetime.zip
+# mkdir -p ./outputs/event_traces_onetime # prepare the target location
+# cp -R "$OutputPath"/. ./outputs/event_traces_onetime # copy only the contents
 
 echo "Particle job ended at: $(date)"

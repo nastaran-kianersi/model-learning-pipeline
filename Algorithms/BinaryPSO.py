@@ -178,6 +178,37 @@ class BinaryPSO():
             self.cp = -3 * t / n + 3.5
             self.cg =  3 * t / n + 0.5
             
+    # Call a single job for a parent particle and get the result
+    # Used when we wanna bypass the inner loop and use all variables in the learning step
+    def run_learner_once(self, save_dir, event_trace_filename, parent_particle_idx):
+        job_out_file_dir = str(os.path.join(save_dir, f'learner_job', ''))
+        os.makedirs(job_out_file_dir, exist_ok=True)
+        args = [arg for arg in self.learner_args]
+        
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
+        subprocess.run(cmd)
+        
+        cmd = ["sbatch", "--parsable", f"./learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + args 
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
+        
+        job_id = proc.stdout.strip()
+        print(f"Submitting inner job {job_id} with args: {args}")
+        
+        while True:
+            if utils.is_job_completed_sacct(job_id):     
+                out_file = os.path.join(job_out_file_dir, f"job_{job_id}.out")
+                avg, n = avg_revision_scores(out_file)
+                print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
+                result = -avg # Minimize negative score (== maximize score)
+                break
+                
+            time.sleep(5)
+             
+        self.gbest_x = DecisionVar.from_array(np.array([1]*self.n_dim))  # all variables used
+        self.gbest_y = result
+        self.best_x, self.best_y = self.gbest_x, self.gbest_y
+        return self, result
+        
     # Use subprocess to run the job script and get the results
     def call_scripts(self, save_dir, event_trace_filename, parent_particle_idx):        
         job_out_file_dir = str(os.path.join(save_dir, f'inner_loop_iter_{self.iter_num}', ''))

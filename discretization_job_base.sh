@@ -1,5 +1,5 @@
 #SBATCH -c 1
-#SBATCH --mem=15G
+#SBATCH --mem=16G
 #SBATCH -t 0-00:40:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
@@ -54,7 +54,15 @@ cp "$propfile_addr" "$propfile_local_addr"
 #     fi
 # done
 
-OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$propfile_local_addr" --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --split-time "08:00" --alg-params "${uv_args[@]}" | tail -n 1)
+# uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$propfile_local_addr" --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --alg-params "${uv_args[@]}" | tee "$tmpfile"
+# tmpfile=$(mktemp)
+# OutputPath=$(tail -n 1 "$tmpfile")
+# rm "$tmpfile"
+
+# --split-time "08:00"
+# OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$propfile_local_addr" --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --alg-params "${uv_args[@]}" | tail -n 1)
+uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$propfile_local_addr" --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --alg-params "${uv_args[@]}"
+OutputPath=$(cat /tmp/output_path.txt)
 echo "Discretization output path: $OutputPath"
 deactivate
 
@@ -65,8 +73,7 @@ echo "Event trace path: $EventTracePath"
 mkdir -p "$EventTracePath"
 cp -r "$OutputPath"/* "$EventTracePath"
 
-# Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
-# it must copy to the parent process's ./outputs, must come to this script as an input argument)
-# cp -r "$TMPDIR/CPD_Analysis_Outputs/" ./outputs/
+# mkdir -p ./outputs/event_traces_$SLURM_JOB_ID # prepare the target location
+# cp -R "$OutputPath"/. ./outputs/event_traces_$SLURM_JOB_ID # copy only the contents
 
 echo "Particle job ended at: $(date)"

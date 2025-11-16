@@ -84,6 +84,18 @@ def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, pipe, *args):
     # pipe.close()                 # Close the writing end of the pipe
 
 
+def learner_wrapper(procnum, bin_pso_obj, return_dict, pipe, *args):
+    sys.stdout = TeeOut(pipe, std=sys.__stdout__)
+    sys.stderr = TeeOut(pipe, std=sys.__stderr__)
+    
+    return_dict[procnum] = bin_pso_obj.run_learner_once(*args)
+    
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    
+
 class PSO():
     r"""
     PSO (Particle swarm optimization) algorithm.
@@ -190,7 +202,7 @@ class PSO():
 
     """
     def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
-                 w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, verbose=False):
+                 w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, early_termination=False, verbose=False):
         
         self.exec_trace_addr = exec_trace_addr
         self.configs_dir = configs_dir
@@ -215,13 +227,14 @@ class PSO():
                 fh.write(f"{prop}, continuous\n")
             
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 5 #30
-        bin_pso_max_iter = 8 #50
+        bin_pso_pop      = 20 #30
+        bin_pso_max_iter = 20 #50
         # create an array of BinaryPSO instances (one per particle)
         self.binary_psos = np.array(
             [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
             dtype=object
         )
+        self.skip_inner_loop = skip_inner_loop
         # ... for BinaryPSO
         
         self.n_opt_vars = len(self.continuous_props)
@@ -359,11 +372,7 @@ class PSO():
                 
             job_ids.append(job_ids_per_var)
             processes.append(processes_per_var)
-            
-        # Make sure if onetime job is done (only the first time this function is called)
-        if self.onetime_process is not None:
-            self.onetime_process.wait()
-            self.onetime_process = None
+    
         
         # Each particle submits multiple jobs (one per discrete variable)
         # Check if all jobs for a particle are finished
@@ -378,6 +387,11 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if len(processes[idx]) == 0:
+                    # Make sure if onetime job is done (only the first time this function is called)
+                    if self.onetime_process is not None:
+                        self.onetime_process.wait()
+                        self.onetime_process = None
+            
                     cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
                     subprocess.run(cmd)
                 
@@ -391,7 +405,12 @@ class PSO():
                     
                     parent_conn, child_conn = Pipe()
                     pipes[idx] = parent_conn # Store the read end for later
-                    p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                    
+                    if self.skip_inner_loop:
+                        p = Process(target=learner_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                    else:
+                        p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                    
                     p.start()
                     inner_loop_processes[idx] = p
                     child_conn.close() # Close the child's write end in the parent process (it's copied to the child)
@@ -412,24 +431,30 @@ class PSO():
 
         while pending_particles:
             for idx in pending_particles:
-                print(f" ***** ***** Information from BinPSO particle {idx} inner loop ***** *****")
-                while True:
-                    try:
-                        recv = pipes[idx].recv().strip()
-                        if recv:
-                            print(recv)
-                    except EOFError:
-                        print('\n')
-                        break
                     
                 if not inner_loop_processes[idx].is_alive():  # Process finished
                     # print("Inner process for BinPSO particle", idx, "has finished.")
                     # results[idx] = self.binary_psos[idx].best_y
-                    self.binary_psos[idx] = return_dict[idx]
-                    results[idx] = self.binary_psos[idx].best_y
+                    print(f" ***** ***** Information from particle {idx} inner loop (BinPSO operation) ***** *****")
+                    while True:
+                        try:
+                            recv = pipes[idx].recv().strip()
+                            if recv:
+                                print(recv)
+                        except EOFError:
+                            print('\n')
+                            break
+                        
+                    if self.skip_inner_loop:
+                        self.binary_psos[idx], results[idx] = return_dict[idx]
+                    else:
+                        self.binary_psos[idx] = return_dict[idx]
+                        results[idx] = self.binary_psos[idx].best_y
+                        
                     pending_particles.remove(idx)
                     del pipes[idx]
-                    print("----- Results from BinPSO particle", idx, ": iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", self.binary_psos[idx].best_x, "-----")
+                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.binary_psos[idx].best_x.arr[i] == 1] + [self.binary_psos[idx].learner_args[-1]]
+                    print("----- Results from particle", idx, " BinPSO operation: inner_loop_iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", args_chosen, "-----")
                 
             time.sleep(5)
                     

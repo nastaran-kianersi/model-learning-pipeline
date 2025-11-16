@@ -15,6 +15,13 @@ EventTracePath="$SCRATCH_DIR/$EventTraceFilename"
 echo "Full path to the event trace file: $EventTracePath"
 # TODO: should I copy the input file from scratch memmory to $TMPDIR? 
 
+# Derive a new filename from EventTracePath with a .dot extension,
+# and set outfile_addr so the later cp uses that name.
+orig_base="$(basename "$EventTracePath")"
+base_no_ext="${orig_base%.*}"
+outfile_addr="${base_no_ext}.dot"
+echo "Prepared output filename: $outfile_addr"
+
 learner_args=("$@")
 echo "${learner_args[@]}"
 
@@ -36,8 +43,6 @@ $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot"
 echo "Starting validate-revision-score..."
 $exec_path validate-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst"
 
-# Don't copy the files yet, you need to use them in the next step (but ./outputs does not exist;
-# it must copy to the parent process's ./outputs, must come to this script as an input argument)
-# cp -r "$TMPDIR/CPD_Analysis_Outputs/" ./outputs/
 
+cp -r "$TMPDIR/nibe.dot" "$SCRATCH_DIR"/"$outfile_addr"
 echo "Learner job ended at: $(date)"
