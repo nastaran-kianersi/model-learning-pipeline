@@ -150,6 +150,24 @@ class BinaryPSO():
         self.cp, self.cg = self.init_cp, self.init_cg
         self.update_coeffs()
         
+        self.X = np.array([BinaryDecisionVar.random(self.n_dim) for _ in range(self.pop)])
+        self.V = np.random.uniform(low=-self.v_max, high=self.v_max, size=(self.pop, self.n_dim))  # speed of particles
+        self.Y = np.array([0] * self.pop)
+        self.pbest_x = self.X.copy()                    # personal best location of every particle in history
+        self.pbest_y = np.array([np.inf] * self.pop)         # best image of every particle in history
+        self.gbest_x = BinaryDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].arr for i in range(self.pop)]), axis=0)))
+        self.gbest_y = np.inf                           # global best y for all particles
+        self.gbest_y_hist = []                          # gbest_y of every iteration
+        
+        self.update_gbest()
+        self.update_coeffs()
+        
+        # record verbose values
+        self.record_mode = False
+        self.record_value = {'X': [], 'V': [], 'Y': []}
+        self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
+
+        
     def update_V(self):
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)

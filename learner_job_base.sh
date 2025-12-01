@@ -19,7 +19,7 @@ echo "Full path to the event trace file: $EventTracePath"
 # and set outfile_addr so the later cp uses that name.
 orig_base="$(basename "$EventTracePath")"
 base_no_ext="${orig_base%.*}"
-outfile_addr="${base_no_ext}.dot"
+outfile_addr="${base_no_ext}_${SLURM_JOB_ID}.dot"
 echo "Prepared output filename: $outfile_addr"
 
 learner_args=("$@")
