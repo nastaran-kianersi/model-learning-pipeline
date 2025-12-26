@@ -2,7 +2,7 @@
 ##SBATCH --error=/dev/null
 #SBATCH -c 1
 #SBATCH --mem=50
-#SBATCH -t 0-00:05:00
+#SBATCH -t 0-00:10:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait
@@ -45,12 +45,16 @@ for i in "$@"; do
     # Copy continuous vars
     if [[ -d "$dir/split_with_same_suffix/continuous" ]]; then
         cp -r "$dir/split_with_same_suffix/continuous/"* "$EventTracePath"/split_with_same_suffix/continuous/ 2>/dev/null
+        echo "Cleaning up directory ${dir} for suffix ${i} ..."
+        chmod -R u+w "$dir"
+        rm -rf "$dir"
     fi
 
     # Copy discrete vars
     if [[ -d "$dir/split_with_same_suffix/discrete" ]]; then
         cp -r "$dir/split_with_same_suffix/discrete/"* "$EventTracePath"/split_with_same_suffix/discrete/ 2>/dev/null
     fi
+
 done
 
 # Zip the merged folder
@@ -58,4 +62,10 @@ cd "$(dirname "$EventTracePath")"
 zip -r "$(basename "$EventTracePath").zip" "$(basename "$EventTracePath")"
 # zip -r "${EventTracePath}.zip" "$EventTracePath"
 rm -rf "$EventTracePath"
+# for i in "$@"; do
+#     dir="$SCRATCH_DIR/event_traces_${i}"
+#    echo "Cleaning up directory ${dir} for suffix ${i} ..."
+#    rm -rf "$dir"
+# done
+
 echo "Event trace path: ${EventTracePath}.zip" #\"$EventTracePath\".zip"

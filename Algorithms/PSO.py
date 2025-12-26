@@ -60,40 +60,47 @@ def parse_property_file(filepath):
     return sorted(list(continuous)), sorted(list(discrete))
 
 
-# Helper (wrapper) class to redirect stdout to a pipe
-class TeeOut(StringIO):
-    def __init__(self, pipe, std=sys.__stdout__):
-        self.pipe = pipe
-
-    def write(self, s):
-        self.pipe.send(s.strip())
-        
-
-def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, pipe, *args):
-    # Redirect stdout to the pipe's connection
-    sys.stdout = TeeOut(pipe, std=sys.__stdout__)
-    sys.stderr = TeeOut(pipe, std=sys.__stderr__)
+def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, *args):
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+    
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    
+    sys.stdout = stdout_capture
+    sys.stderr = stderr_capture
     
     # bin_pso = copy.deepcopy(bin_pso_obj)
-    return_dict[procnum] = bin_pso_obj.optimize_distributed(*args)
+    results = bin_pso_obj.optimize_distributed(*args)
+    return_dict[procnum] = {
+            'results': results,
+            'stdout': stdout_capture.getvalue(),
+            'stderr': stderr_capture.getvalue()
+        }
     
-    sys.stdout.flush()           # Ensure all buffered output is sent through the pipe
-    sys.stderr.flush()
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-    # pipe.close()                 # Close the writing end of the pipe
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
 
 
-def learner_wrapper(procnum, bin_pso_obj, return_dict, pipe, *args):
-    sys.stdout = TeeOut(pipe, std=sys.__stdout__)
-    sys.stderr = TeeOut(pipe, std=sys.__stderr__)
+def learner_wrapper(procnum, bin_pso_obj, return_dict, *args):
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
     
-    return_dict[procnum] = bin_pso_obj.run_learner_once(*args)
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
     
-    sys.stdout.flush()
-    sys.stderr.flush()
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
+    sys.stdout = stdout_capture
+    sys.stderr = stderr_capture
+    
+    results = bin_pso_obj.run_learner_once(*args)
+    return_dict[procnum] = {
+            'results': results,
+            'stdout': stdout_capture.getvalue(),
+            'stderr': stderr_capture.getvalue()
+        }
+    
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
     
 
 class PSO():
@@ -227,8 +234,8 @@ class PSO():
                 fh.write(f"{prop}, continuous\n")
             
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 20 #30
-        bin_pso_max_iter = 20 #50
+        bin_pso_pop      = 10 #30
+        bin_pso_max_iter = 10 #50
         # create an array of BinaryPSO instances (one per particle)
         self.binary_psos = np.array(
             [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
@@ -380,7 +387,6 @@ class PSO():
         inner_loop_processes = [None] * self.pop
         pending_particles = list(range(self.pop))
         
-        pipes = {}          # Dictionary to hold the read ends of the pipes
         manager = Manager()
         return_dict = manager.dict()
     
@@ -403,18 +409,13 @@ class PSO():
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
                     leaner_input_filename = leaner_input_foldername + ".zip"
                     
-                    parent_conn, child_conn = Pipe()
-                    pipes[idx] = parent_conn # Store the read end for later
-                    
                     if self.skip_inner_loop:
-                        p = Process(target=learner_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                        p = Process(target=learner_wrapper, args=(idx, self.binary_psos[idx], return_dict, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
                     else:
-                        p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, child_conn, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                        p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
                     
                     p.start()
                     inner_loop_processes[idx] = p
-                    child_conn.close() # Close the child's write end in the parent process (it's copied to the child)
-    
                     pending_particles.remove(idx)
                 else:
                     # print("Checking jobs for particle", idx, ":", job_ids[idx])
@@ -431,28 +432,16 @@ class PSO():
 
         while pending_particles:
             for idx in pending_particles:
-                    
-                if not inner_loop_processes[idx].is_alive():  # Process finished
-                    # print("Inner process for BinPSO particle", idx, "has finished.")
-                    # results[idx] = self.binary_psos[idx].best_y
-                    print(f" ***** ***** Information from particle {idx} inner loop (BinPSO operation) ***** *****")
-                    while True:
-                        try:
-                            recv = pipes[idx].recv().strip()
-                            if recv:
-                                print(recv)
-                        except EOFError:
-                            print('\n')
-                            break
+                if not inner_loop_processes[idx].is_alive():
+                    print("Inner process for BinPSO particle", idx, "has finished.")
+                    print(return_dict[idx]['stdout'])
+                    if return_dict[idx]['stderr']:
+                        print(f"STDERR: {return_dict[idx]['stderr']}")
                         
-                    if self.skip_inner_loop:
-                        self.binary_psos[idx], results[idx] = return_dict[idx]
-                    else:
-                        self.binary_psos[idx] = return_dict[idx]
-                        results[idx] = self.binary_psos[idx].best_y
+                    self.binary_psos[idx] = return_dict[idx]['results']
+                    results[idx] = self.binary_psos[idx].best_y
                         
                     pending_particles.remove(idx)
-                    del pipes[idx]
                     args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.binary_psos[idx].best_x.arr[i] == 1] + [self.binary_psos[idx].learner_args[-1]]
                     print("----- Results from particle", idx, " BinPSO operation: inner_loop_iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", args_chosen, "-----")
                 
