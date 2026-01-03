@@ -81,28 +81,6 @@ class BinaryPSO():
     
     This algorithm was adapted from the earlier works of J. Kennedy and
     R.C. Eberhart in Particle Swarm Optimization [IJCNN1995]_.
-
-    The position update can be defined as:
-
-    .. math::
-       x_{i}(t+1) = x_{i}(t) + v_{i}(t+1)
-
-    Where the position at the current step :math:`t` is updated using
-    the computed velocity at :math:`t+1`. Furthermore, the velocity update
-    is defined as:
-
-    .. math::
-
-       v_{ij}(t + 1) = w * v_{ij}(t) + c_{p}r_{1j}(t)[y_{ij}(t) − x_{ij}(t)]
-                       + c_{g}r_{2j}(t)[\hat{y}_{j}(t) − x_{ij}(t)]
-
-    Here, :math:`cp` and :math:`cg` are the cognitive and social parameters
-    respectively. They control the particle's behavior given two choices: (1) to
-    follow its *personal best* or (2) follow the swarm's *global best* position.
-    Overall, this dictates if the swarm is explorative or exploitative in nature.
-    In addition, a parameter :math:`w` controls the inertia of the swarm's
-    movement.
-
     """
     def __init__(self, learner_args, key_prop, pop, max_iter,
                  w=0.8, c1=1, c2=1, auto_coeffs=True, early_termination=False, verbose=False):
@@ -144,18 +122,24 @@ class BinaryPSO():
         self.record_value = {'X': [], 'V': [], 'Y': []}
         self.best_x, self.best_y = self.gbest_x, self.gbest_y  # history reasons, will be deprecated
         
-    def reset_iter_params(self):
+    def reset_iter_params(self, gbest_x_init=None):
         self.iter_num = 0
         self.w = self.init_w
         self.cp, self.cg = self.init_cp, self.init_cg
         self.update_coeffs()
         
-        self.X = np.array([BinaryDecisionVar.random(self.n_dim) for _ in range(self.pop)])
+        if gbest_x_init is None:
+            self.X = np.array([BinaryDecisionVar.random(self.n_dim) for _ in range(self.pop)])
+            self.pbest_x = self.X.copy()                    # personal best location of every particle in history
+            self.gbest_x = BinaryDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].arr for i in range(self.pop)]), axis=0)))
+        else:
+            self.gbest_x = BinaryDecisionVar.from_array(gbest_x_init.arr.copy())
+            self.X = np.array([BinaryDecisionVar.from_array(self.gbest_x.arr.copy()) for _ in range(self.pop)])
+            self.pbest_x = self.X.copy()
+                
         self.V = np.random.uniform(low=-self.v_max, high=self.v_max, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * self.pop)
-        self.pbest_x = self.X.copy()                    # personal best location of every particle in history
         self.pbest_y = np.array([np.inf] * self.pop)         # best image of every particle in history
-        self.gbest_x = BinaryDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].arr for i in range(self.pop)]), axis=0)))
         self.gbest_y = np.inf                           # global best y for all particles
         self.gbest_y_hist = []                          # gbest_y of every iteration
         
@@ -186,6 +170,11 @@ class BinaryPSO():
         r = np.random.random_sample(size=(self.pop, self.n_dim))
         tmp_X = np.array([copy.copy(self.X[i].arr) for i in range(self.pop)])
         tmp_X = np.where(r < sigmoid_V, 1, 0)
+        
+        # If a particle has all zeros, randomly set one element to 1
+        for i in range(self.pop):
+            if np.all(tmp_X[i] == 0):
+                tmp_X[i][np.random.randint(self.n_dim)] = 1
         self.X = np.array([BinaryDecisionVar.from_array(tmp_X[i]) for i in range(self.pop)])
         
     def update_coeffs(self):
@@ -321,8 +310,8 @@ class BinaryPSO():
             
         return converged
     
-    def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx):
-        self.reset_iter_params()
+    def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx, gbest_x_init=None):
+        self.reset_iter_params(gbest_x_init)
         print(f"BinaryPSO: max_iter: {self.max_iter}, pop: {self.pop}")
         
         for iter_num in range(self.max_iter):
@@ -336,7 +325,7 @@ class BinaryPSO():
     
     def analyze_convergence(self):
         try:
-            gbest_converged = self.has_converged_gbest()
+            gbest_converged = self.has_converged_gbest(patience=self.max_iter//2)
             return gbest_converged
         
         except Exception as e:
@@ -364,7 +353,7 @@ class BinaryPSO():
         rel_improvement = improvement / scale
         
         status = "converged" if rel_improvement < rel_tol else "not converged"
-        print(f"gbest improvement analysis: {status}")
+        print(f"BinaryPSO gbest improvement analysis: {status}")
         return rel_improvement < rel_tol
 
     # TODO: draw a table containing the value of each dimension for each particle over iterations

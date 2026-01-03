@@ -25,47 +25,89 @@ echo $infile_arg
 EventTraceFoldername="${infile_arg#--EventTraceFoldername=}"
 
 SCRATCH_DIR="/global/scratch/hpc5649"
-EventTracePath="$SCRATCH_DIR/$EventTraceFoldername"
+TrainEventTracePath="$SCRATCH_DIR/train_$EventTraceFoldername"
+TestEventTracePath="$SCRATCH_DIR/test_$EventTraceFoldername"
 
 # Create the unified directory
-mkdir -p "$EventTracePath/split_with_same_suffix/continuous" 
-mkdir -p "$EventTracePath/split_with_same_suffix/discrete"
+mkdir -p "$TrainEventTracePath/split_with_same_suffix/continuous" 
+mkdir -p "$TrainEventTracePath/split_with_same_suffix/discrete"
+mkdir -p "$TestEventTracePath/split_with_same_suffix/continuous" 
+mkdir -p "$TestEventTracePath/split_with_same_suffix/discrete"
+
+train_exists=true
+test_exists=true
 
 # Loop through provided suffixes
 for i in "$@"; do
-    dir="$SCRATCH_DIR/event_traces_${i}"
+    for prefix in "train" "test"; do
+        dir="$SCRATCH_DIR/${prefix}_event_traces_${i}"
 
-    if [[ ! -d "$dir" ]]; then
-        echo "Directory $dir does not exist, skipping."
-        continue
-    fi
+        if [[ ! -d "$dir" ]]; then
+            echo "Directory $dir does not exist, skipping."
+            # Track which prefix doesn't exist (assuming that the job IDs exist)
+            # if [[ "$prefix" == "train" ]]; then
+            #     train_exists=false
+            # else
+            #     test_exists=false
+            # fi
+            continue
+        fi
 
-    # echo "Merging from $dir ..."
+        # Select the correct destination based on prefix
+        if [[ "$prefix" == "train" ]]; then
+            DestPath="$TrainEventTracePath"
+        else
+            DestPath="$TestEventTracePath"
+        fi
 
-    # Copy continuous vars
-    if [[ -d "$dir/split_with_same_suffix/continuous" ]]; then
-        cp -r "$dir/split_with_same_suffix/continuous/"* "$EventTracePath"/split_with_same_suffix/continuous/ 2>/dev/null
-        echo "Cleaning up directory ${dir} for suffix ${i} ..."
-        chmod -R u+w "$dir"
-        rm -rf "$dir"
-    fi
+        # Copy continuous vars
+        if [[ -d "$dir/split_with_same_suffix/continuous" ]]; then
+            cp -r "$dir/split_with_same_suffix/continuous/"* "$DestPath"/split_with_same_suffix/continuous/ 2>/dev/null
+            echo "Cleaning up directory ${dir} for job ID ${i} ..."
+            chmod -R u+r "$dir"
+            chmod -R u+w "$dir"
+            rm -rf "$dir"
 
-    # Copy discrete vars
-    if [[ -d "$dir/split_with_same_suffix/discrete" ]]; then
-        cp -r "$dir/split_with_same_suffix/discrete/"* "$EventTracePath"/split_with_same_suffix/discrete/ 2>/dev/null
-    fi
+            # find "$dir" -xtype l -delete 2>/dev/null  # Remove dangling symlinks
+            # chmod -R u+w "$dir" 2>/dev/null            # Fix permissions where possible
+            # rm -rf "$dir"/* 2>/dev/null                # Remove everything else
+            # rmdir "$dir" 2>/dev/null || true
 
+            # find "$dir" -type l -delete               # Remove ALL symlinks (dangling or not)
+            # find "$dir" -mindepth 1 -delete 2>/dev/null  # Remove everything
+        fi
+
+        # Copy discrete vars
+        if [[ -d "$dir/split_with_same_suffix/discrete" ]]; then
+            cp -r "$dir/split_with_same_suffix/discrete/"* "$DestPath"/split_with_same_suffix/discrete/ 2>/dev/null
+        fi
+    done
 done
 
-# Zip the merged folder
-cd "$(dirname "$EventTracePath")"
-zip -r "$(basename "$EventTracePath").zip" "$(basename "$EventTracePath")"
-# zip -r "${EventTracePath}.zip" "$EventTracePath"
-rm -rf "$EventTracePath"
+# Zip both merged folders
+cd "$(dirname "$TrainEventTracePath")"
+
+if [ "$train_exists" = true ]; then
+    echo "Zipping train event traces ..."
+    zip -r "$(basename "$TrainEventTracePath").zip" "$(basename "$TrainEventTracePath")"   
+    echo "Train event trace paths: ${TrainEventTracePath}.zip"
+else
+    echo "No train event traces to zip."
+fi
+
+if [ "$test_exists" = true ]; then
+    echo "Zipping test event traces ..."
+    zip -r "$(basename "$TestEventTracePath").zip" "$(basename "$TestEventTracePath")" 
+    echo "Test event trace paths: ${TestEventTracePath}.zip"
+else
+    echo "No test event traces to zip."
+fi
+
+rm -rf "$TrainEventTracePath"
+rm -rf "$TestEventTracePath"
+
 # for i in "$@"; do
 #     dir="$SCRATCH_DIR/event_traces_${i}"
 #    echo "Cleaning up directory ${dir} for suffix ${i} ..."
 #    rm -rf "$dir"
 # done
-
-echo "Event trace path: ${EventTracePath}.zip" #\"$EventTracePath\".zip"

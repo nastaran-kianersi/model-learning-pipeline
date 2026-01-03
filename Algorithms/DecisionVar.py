@@ -72,8 +72,8 @@ Methods/vars to be implemented:
 """
 class DecisionVar:
     n_dim = 4
-    lb = np.array([10, 5.0, 0, 0.05])
-    ub = np.array([500, 100.0, len(KernelType) - 1, 10.0])
+    lb = np.array([50, 5.0, 0, 0.05])
+    ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
         
     # in update_X and update_V, handle rbf_gamma when kernel is not rbf,
     # in here, handle discrete arithmetic

@@ -234,13 +234,14 @@ class PSO():
                 fh.write(f"{prop}, continuous\n")
             
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 10 #30
+        bin_pso_pop      = 15 #30
         bin_pso_max_iter = 10 #50
         # create an array of BinaryPSO instances (one per particle)
         self.binary_psos = np.array(
-            [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter) for _ in range(pop)],
+            [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter, early_termination=True) for _ in range(pop)],
             dtype=object
         )
+        self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object)
         self.skip_inner_loop = skip_inner_loop
         # ... for BinaryPSO
         
@@ -389,7 +390,7 @@ class PSO():
         
         manager = Manager()
         return_dict = manager.dict()
-    
+            
         while pending_particles:
             for idx in pending_particles:
                 if len(processes[idx]) == 0:
@@ -410,20 +411,39 @@ class PSO():
                     leaner_input_filename = leaner_input_foldername + ".zip"
                     
                     if self.skip_inner_loop:
-                        p = Process(target=learner_wrapper, args=(idx, self.binary_psos[idx], return_dict, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                        args = (
+                            idx,
+                            self.binary_psos[idx],
+                            return_dict,
+                            os.path.join(job_out_file_dir, f"particle_{idx}"),
+                            leaner_input_filename,
+                            idx
+                        )
+                        p = Process(target=learner_wrapper, args=args)
                     else:
-                        p = Process(target=inner_loop_wrapper, args=(idx, self.binary_psos[idx], return_dict, os.path.join(job_out_file_dir, f"particle_{idx}"), leaner_input_filename, idx))
+                        args = (
+                            idx,
+                            self.binary_psos[idx],
+                            return_dict,
+                            os.path.join(job_out_file_dir, f"particle_{idx}"),
+                            leaner_input_filename,
+                            idx,
+                            self.inner_loop_gbest_x_init[idx]
+                        )
+                        p = Process(target=inner_loop_wrapper, args=args)
                     
                     p.start()
                     inner_loop_processes[idx] = p
                     pending_particles.remove(idx)
                 else:
-                    # print("Checking jobs for particle", idx, ":", job_ids[idx])
-                    for ith_var, proc in enumerate(processes[idx]):
-                        if utils.is_job_completed_sacct(job_ids[idx][ith_var]):
-                            processes[idx].remove(proc)
-                            
-                                        
+                    for ith_var in range(len(processes[idx])):
+                        if processes[idx][ith_var] is not None and utils.is_job_completed_sacct(job_ids[idx][ith_var]):
+                            # print(" ---- job ", job_ids[idx][ith_var], "is completed.")
+                            processes[idx][ith_var] = None
+                    
+                    if all(p is None for p in processes[idx]):
+                        processes[idx] = []
+                                                       
             time.sleep(5)
         
         # Check for the inner loops of particles and collect their results
@@ -433,17 +453,22 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if not inner_loop_processes[idx].is_alive():
-                    print("Inner process for BinPSO particle", idx, "has finished.")
-                    print(return_dict[idx]['stdout'])
+                    print("\n----- Inner process for BinPSO particle", idx, "has finished. Logs:")
+                    print(return_dict[idx]['stdout'], end="")
                     if return_dict[idx]['stderr']:
-                        print(f"STDERR: {return_dict[idx]['stderr']}")
+                        print(f"STDERR: {return_dict[idx]['stderr']}", end="")
                         
                     self.binary_psos[idx] = return_dict[idx]['results']
                     results[idx] = self.binary_psos[idx].best_y
+                    self.inner_loop_gbest_x_init[idx] = self.binary_psos[idx].gbest_x
+                    
+                    # Clean up learner input files
+                    cmd = ["bash", "./cleanup.sh",  str(self.iter_num), str(idx)]
+                    subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
                     args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.binary_psos[idx].best_x.arr[i] == 1] + [self.binary_psos[idx].learner_args[-1]]
-                    print("----- Results from particle", idx, " BinPSO operation: inner_loop_iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", args_chosen, "-----")
+                    print("----- Results from particle", idx, " BinPSO operation: inner_loop_iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", args_chosen, "-----\n")
                 
             time.sleep(5)
                     
@@ -552,7 +577,7 @@ class PSO():
         scale = max(abs(past), 1.0)  # avoid division by zero
         rel_improvement = improvement / scale
         
-        print("gbest improvement analysis:", "converged" if rel_improvement < rel_tol else "not converged")
+        print("PSO gbest improvement analysis:", "converged" if rel_improvement < rel_tol else "not converged")
         return rel_improvement < rel_tol
 
     def has_converged_particles(self, tol_factor=1e-2):
@@ -578,8 +603,8 @@ class PSO():
         vel_norms = np.linalg.norm(velocities, axis=1)
         velocity_converged = np.mean(vel_norms) < tol_factor * pos_scale
         
-        print("Convergence analysis based on position:", "converged" if position_converged else "not converged")
-        print("Convergence analysis based on velocity:", "converged" if velocity_converged else "not converged")
+        print("PSO Convergence analysis based on position:", "converged" if position_converged else "not converged")
+        print("PSO Convergence analysis based on velocity:", "converged" if velocity_converged else "not converged")
         
         return position_converged, velocity_converged
     
