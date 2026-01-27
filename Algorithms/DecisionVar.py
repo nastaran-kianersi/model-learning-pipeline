@@ -72,7 +72,7 @@ Methods/vars to be implemented:
 """
 class DecisionVar:
     n_dim = 4
-    lb = np.array([50, 5.0, 0, 0.05])
+    lb = np.array([100, 10.0, 0, 0.05])
     ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
         
     # in update_X and update_V, handle rbf_gamma when kernel is not rbf,
@@ -177,6 +177,12 @@ class DecisionVar:
 
 # Wrapper around multiple DecisionVar instances
 class CompositeDecisionVar:
+    var_names = []  # Names of the decision variables in the composite variable
+    
+    @staticmethod
+    def set_var_names(var_names):
+        CompositeDecisionVar.var_names = var_names
+        
     @staticmethod
     def random(n_vars):
         decision_vars = [DecisionVar.random() for _ in range(n_vars)]
@@ -207,7 +213,11 @@ class CompositeDecisionVar:
         return cls(decision_vars)
     
     def __repr__(self):
-        return f"CompositeDecisionVar(n_vars={self.n_vars}, decision_vars={self.decision_vars})"
+        vars_dict = {CompositeDecisionVar.var_names[i]: self.decision_vars[i] 
+                    for i in range(self.n_vars)}
+        lines = [f"  {k}: {v}" for k, v in vars_dict.items()]
+        return f"CompositeDecisionVar(n_vars={self.n_vars},\n" + "\n".join(lines) + "\n)"
+        # return f"CompositeDecisionVar(n_vars={self.n_vars}, decision_vars={self.decision_vars})"
     
     def __add__(self, other):
         if not isinstance(other, CompositeDecisionVar):

@@ -39,10 +39,8 @@ uv run event-trace-extraction-by-CPD \
     "$TMPDIR"/onetime_props.prop \
     --base-dir "$TMPDIR/CPD_Analysis_Outputs" \
     --data-timezone "Europe/Paris" \
-    --enable-train-test-split --train-ratio=0.8 \
-    --split-time "08:00"
+    --enable-train-test-split --train-ratio=0.75
 deactivate
-
 
 # create a folder in scratch mem called event_traces_ontime and copy the content of OutputPath there
 # Read the file into an array (one element per line)

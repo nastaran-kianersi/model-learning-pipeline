@@ -1,5 +1,5 @@
 from Algorithms.PSO import PSO, parse_property_file
-from Algorithms.BinaryPSO import BinaryPSO
+from Algorithms.InnerPSO import InnerPSO
 import os
 from argparse import ArgumentParser
 from pathlib import Path
@@ -20,7 +20,7 @@ os.makedirs(output_dir, exist_ok=True)
 print(f"Execution trace address: {exec_trace_addr}")
 print(f"Output directory: {output_dir}\n\n")
 
-## ------- BinPSO test -------
+## ------- InnerPSO test -------
 # with open(os.path.join(configs_dir, 'key_prop.txt'), 'r') as f:
 #     key_prop = f.read().strip()
     
@@ -36,11 +36,11 @@ print(f"Output directory: {output_dir}\n\n")
 # print("key prop:", key_prop, "\n\n")
 
 # all_props = onetime_props + continuous_props
-# bin_pso_pop      = 10 #30
-# bin_pso_max_iter = 20 #50
-# binary_psos = BinaryPSO(all_props, key_prop, bin_pso_pop, bin_pso_max_iter)
+# inner_pso_pop      = 10 #30
+# inner_pso_max_iter = 20 #50
+# inner_psos = InnerPSO(all_props, key_prop, inner_pso_pop, inner_pso_max_iter)
 
-# binary_psos.optimize_distributed('./', "event_traces.zip")
+# inner_psos.optimize_distributed('./', "event_traces.zip")
 ## -------------------------
 
 # exec_trace_addr is the input directory
@@ -48,7 +48,7 @@ print(f"Output directory: {output_dir}\n\n")
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, configs_dir=configs_dir, output_dir=output_dir,
-          pop=30, max_iter=30, w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=True, early_termination=True) #pop=128, max_iter=100
+          pop=32, max_iter=20, w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, early_termination=True) #pop=128, max_iter=100   # pop=30, max_iter=30
 best_x, best_y = pso.optimize_distributed()
 pso.analyze_convergence()
 print("Best solution:", best_x)

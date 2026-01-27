@@ -1,8 +1,9 @@
 #SBATCH -c 2
-#SBATCH --mem=3G
+#SBATCH --mem=8G
 #SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
+##SBATCH --error=/dev/null
 ##SBATCH --wait
 
 infile_arg="$1"
@@ -10,7 +11,7 @@ shift
 echo $infile_arg
 EventTraceFilename="${infile_arg#--EventTraceFilename=}"
 
-train_test_split=true
+train_test_split="true"
     
 SCRATCH_DIR="/global/scratch/hpc5649"
 EventTracePath="$SCRATCH_DIR/$EventTraceFilename"
@@ -33,22 +34,22 @@ echo "Learner job started at: $(date)"
 
 # Automata Learning
 module load java/21.0.1
-cd ../../hpm_automata_learning/heat-pump-mining-v2/
-exec_path=build/distributions/heat-pump-mining-0.0.0-41-6dbc376-SNAPSHOT/bin/heat-pump-mining
+cd ../../hpm_automata_learning/heat-pump-mining-v3/
+exec_path=build/distributions/heat-pump-mining-0.0.0-68-06d845e-SNAPSHOT/bin/heat-pump-mining
 
 echo "The actual script started running at: $(date)"
-if [ "$train_test_split" = false ]; then
+if [[ "$train_test_split" = "false" ]]; then
     # Train only (no test file)
     echo "Starting convert-format..."
     $exec_path convert-format -i $TrainEventTracePath -o "$TMPDIR/nibe.json.zst"
     echo "Starting select-and-merge..."
     last_arg="${learner_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${learner_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" -a
+    $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
-    $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot"
+    $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u #--parallel
     echo "Starting validate-revision-score..."
-    $exec_path validate-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst"
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst" --init=$init --single-rooted #--parallel
 else
     # Train and test
     echo "Starting convert-format for train..."
@@ -58,13 +59,16 @@ else
     echo "Starting select-and-merge for train..."
     last_arg="${learner_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${learner_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" -a
+    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" -a
+    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
-    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot"
-    echo "Starting validate-revision-score..."
-    $exec_path validate-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst"
+    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u #--parallel
+
+    echo "Starting validate-revision-score with train data..."
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-rooted #--parallel
+    echo "Starting validate-revision-score with test data..."
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init --single-rooted #--parallel
 fi
 
 #cp -r "$TMPDIR/nibe.dot" "$SCRATCH_DIR"/"$outfile_addr"

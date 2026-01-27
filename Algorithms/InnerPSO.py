@@ -21,57 +21,171 @@ import traceback
 from . import utils
 from .DecisionVar import *
 
+# HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
+# REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
 
-HEADER_RE = re.compile(r'^\s*LOG-?NAME\s*,\s*REVISION[-_ ]?SCORE(S)?\s*,', re.I)
-REV_COL_RE = re.compile(r'^REVISION[-_ ]?SCORE(S)?$', re.I)
+# def parse_revision_score_table(lines_iter):
+#     """
+#     Parse a single revision score table from an iterator of lines.
+#     Returns (total, count) for the scores found, or (0, 0) if no valid table.
+#     """
+#     total = 0.0
+#     count = 0
+#     rev_idx = None
+    
+#     # Find and parse header
+#     for line in lines_iter:
+#         if HEADER_RE.search(line):
+#             header = next(csv.reader([line]))
+#             header = [h.strip() for h in header]
+#             for i, h in enumerate(header):
+#                 if REV_COL_RE.match(h):
+#                     rev_idx = i
+#                     break
+#             if rev_idx is None:
+#                 raise RuntimeError("Could not find REVISION-SCORE(S) column in header")
+#             break
+    
+#     if rev_idx is None:
+#         return 0.0, 0
+    
+#     # Parse data rows
+#     for line in lines_iter:
+#         # End of table heuristics
+#         if not line.strip() or ',' not in line:
+#             break
+            
+#         row = next(csv.reader([line]))
+#         if len(row) <= rev_idx:
+#             break
+            
+#         cell = row[rev_idx].strip()
+#         try:
+#             val = float(cell)
+#         except ValueError:
+#             try:
+#                 val = float(re.sub(r'[^0-9eE+\-\.]', '', cell))
+#             except ValueError:
+#                 continue
+        
+#         total += val
+#         count += 1
+    
+#     return total, count
 
-def avg_revision_scores(path):
+
+# def avg_revision_scores_multi(path):
+#     """
+#     Parse revision scores from a file that may contain one or two score tables.
+#     Returns a list of (average, count) tuples, one per table found.
+#     """
+#     results = []
+    
+#     with open(path, 'r', encoding='utf-8') as f:
+#         lines = f.readlines()
+    
+#     i = 0
+#     while i < len(lines):
+#         # Look for "Starting validate-revision-score..." marker
+#         if 'validate-revision-score' in lines[i].lower():
+#             # Parse the table starting from the next line
+#             total, count = parse_revision_score_table(iter(lines[i+1:]))
+#             if count > 0:
+#                 results.append((total / count, count))
+#             else:
+#                 results.append((0.0, 0))
+#             # Skip past this table
+#             i += count + 2  # +2 for marker line and header
+#         else:
+#             i += 1
+    
+#     return results if results else [(0.0, 0), (0.0, 0)]
+
+import re
+import csv
+
+HEADER_RE = re.compile(r'^\s*log\s*,\s*score\s*$', re.I)
+
+def parse_revision_score_table(lines_iter):
+    """
+    Parse a single revision score table from an iterator of lines.
+    Returns (total, count) for the scores found, or (0, 0) if no valid table.
+    """
     total = 0.0
     count = 0
-    in_table = False
-    rev_idx = None
-
-    with open(path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if not in_table:
-                if HEADER_RE.search(line):
-                    # parse header to find the revision score column index
-                    header = next(csv.reader([line]))
-                    header = [h.strip() for h in header]
-                    for i, h in enumerate(header):
-                        if REV_COL_RE.match(h):
-                            rev_idx = i
-                            break
-                    if rev_idx is None:
-                        raise RuntimeError("Could not find REVISION-SCORE(S) column in header")
-                    in_table = True
-                # else: keep skipping lines until we hit the header
-                continue
-
-            # end of table heuristics: stop if we hit a blank line or a non-CSV-ish line
-            if not line.strip() or ',' not in line:
-                break
-
-            row = next(csv.reader([line]))
-            if len(row) <= rev_idx:
-                break
-
-            cell = row[rev_idx].strip()
-            # strip any stray characters (e.g., percentages) and convert to float
-            try:
-                val = float(cell)
-            except ValueError:
-                val = float(re.sub(r'[^0-9eE+\-\.]', '', cell))
-
+    header_found = False
+    
+    # Find header
+    for line in lines_iter:
+        if HEADER_RE.search(line):
+            header_found = True
+            break
+    
+    if not header_found:
+        return 0.0, 0
+    
+    # Parse data rows
+    for line in lines_iter:
+        # Skip empty lines
+        if not line.strip():
+            continue
+            
+        # End of table: lines starting with < (like <average>, <stddev>)
+        if line.strip().startswith('<'):
+            break
+            
+        # Check if line contains comma
+        if ',' not in line:
+            break
+        
+        row = next(csv.reader([line]))
+        if len(row) < 2:
+            break
+        
+        # Score is in the second column (index 1)
+        cell = row[1].strip()
+        try:
+            val = float(cell)
             total += val
             count += 1
+        except ValueError:
+            # Try cleaning the cell value
+            try:
+                val = float(re.sub(r'[^0-9eE+\-\.]', '', cell))
+                total += val
+                count += 1
+            except ValueError:
+                continue
+    
+    return total, count
 
-    if count == 0:
-        return 0, 0
-    return total/count, count
+def avg_revision_scores_multi(path):
+    """
+    Parse revision scores from a file that may contain one or two score tables.
+    Returns a list of (average, count) tuples, one per table found.
+    """
+    results = []
+    with open(path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    i = 0
+    while i < len(lines):
+        # Look for "Starting validate-revision-score" marker
+        if 'validate-revision-score' in lines[i].lower():
+            # Parse the table starting from the next line
+            total, count = parse_revision_score_table(iter(lines[i+1:]))
+            if count > 0:
+                results.append((total / count, count))
+            else:
+                results.append((0.0, 0))
+            i += 1 # more efficient if i += count + 4
+        else:
+            i += 1
+    
+    return results if results else [(0.0, 0), (0.0, 0)]
 
 
-class BinaryPSO():
+class InnerPSO():
     r"""
     Binary PSO (Particle swarm optimization) algorithm.
 
@@ -192,7 +306,7 @@ class BinaryPSO():
         os.makedirs(job_out_file_dir, exist_ok=True)
         args = [arg for arg in self.learner_args]
         
-        cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv3_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
         subprocess.run(cmd)
         
         cmd = ["sbatch", "--parsable", f"./learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + args 
@@ -204,8 +318,16 @@ class BinaryPSO():
         while True:
             if utils.is_job_completed_sacct(job_id):     
                 out_file = os.path.join(job_out_file_dir, f"job_{job_id}.out")
-                avg, n = avg_revision_scores(out_file)
-                print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
+                resutls = avg_revision_scores_multi(out_file)
+                
+                if len(resutls) == 1:
+                    avg, n = resutls[0]
+                    print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Train: Rows: {n}, avg: {-avg}")
+                else:
+                    train_avg, train_n = resutls[0]  # use the first table (train data)
+                    avg, n = resutls[1]  # use the second table (test data)
+                    print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Train: Rows: {train_n}, avg: {-train_avg} --- Test: Rows: {n}, avg: {-avg}")
+                    
                 result = -avg # Minimize negative score (== maximize score)
                 break
                 
@@ -226,7 +348,7 @@ class BinaryPSO():
         for idx, x in enumerate(self.X):
             x = copy.copy(x)
             args = [self.learner_args[i] for i, val in enumerate(x.arr) if val == 1] + [self.learner_args[-1]]  
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learner_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv3_job_base.sh', f'./learner_job_{parent_particle_idx}.sh']
             subprocess.run(cmd)
             
             cmd = ["sbatch", "--parsable", f"./learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + args 
@@ -245,8 +367,16 @@ class BinaryPSO():
             for idx in pending:
                 if utils.is_job_completed_sacct(job_ids[idx]):     
                     out_file = os.path.join(job_out_file_dir, f"job_{job_ids[idx]}.out")
-                    avg, n = avg_revision_scores(out_file)
-                    print(f"Job ID {job_ids[idx]}, Particle {idx} --- Rows: {n}, Avg(REVISION-SCORE[S]): {-avg}")
+                    resutls = avg_revision_scores_multi(out_file)
+                    
+                    if len(resutls) == 1:
+                        avg, n = resutls[0]
+                        print(f"Job ID {job_ids[idx]}, Parent particle {idx} --- Train: Rows: {n}, avg: {-avg}")
+                    else:
+                        train_avg, train_n = resutls[0]  # use the first table (train data)
+                        avg, n = resutls[1]  # use the second table (test data)
+                        print(f"JobID {job_ids[idx]}, Particle {idx} --- Train: Rows: {train_n}, avg: {-train_avg} --- Test: Rows: {n}, avg: {-avg}")
+                        
                     pending.remove(idx)
                     results[idx] = -avg # Minimize negative score (== maximize score)
                 
@@ -261,7 +391,7 @@ class BinaryPSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        # print("BinaryPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
+        # print("InnerPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
         # [:, np.newaxis]
         self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
@@ -272,7 +402,7 @@ class BinaryPSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
-        # #print("BinaryPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
+        # #print("InnerPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
             self.gbest_x = self.X[idx_min]
             self.gbest_y = self.pbest_y[idx_min]
@@ -312,10 +442,10 @@ class BinaryPSO():
     
     def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx, gbest_x_init=None):
         self.reset_iter_params(gbest_x_init)
-        print(f"BinaryPSO: max_iter: {self.max_iter}, pop: {self.pop}")
+        print(f"InnerPSO: max_iter: {self.max_iter}, pop: {self.pop}")
         
         for iter_num in range(self.max_iter):
-            print(f"BinaryPSO iteration: {iter_num}")
+            print(f"InnerPSO iteration: {iter_num}")
             converged = self.iterate(iter_num, save_dir, event_trace_filename, parent_particle_idx)
             if converged:
                 break
@@ -345,6 +475,9 @@ class BinaryPSO():
         if len(self.gbest_y_hist) < patience + 1:
             return False
 
+        if abs(self.gbest_y) < 1e-12:
+            return False
+        
         recent = self.gbest_y_hist[-patience:]
         past = self.gbest_y_hist[-(patience+1)]
         
@@ -353,7 +486,7 @@ class BinaryPSO():
         rel_improvement = improvement / scale
         
         status = "converged" if rel_improvement < rel_tol else "not converged"
-        print(f"BinaryPSO gbest improvement analysis: {status}")
+        print(f"InnerPSO gbest improvement analysis: {status}")
         return rel_improvement < rel_tol
 
     # TODO: draw a table containing the value of each dimension for each particle over iterations

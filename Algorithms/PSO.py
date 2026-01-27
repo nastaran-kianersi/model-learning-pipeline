@@ -9,7 +9,7 @@ import sys
 
 from . import utils
 from .DecisionVar import *
-from .BinaryPSO import *
+from .InnerPSO import *
 import subprocess
 from multiprocessing import Process, Manager, Pipe
 from io import StringIO
@@ -60,7 +60,7 @@ def parse_property_file(filepath):
     return sorted(list(continuous)), sorted(list(discrete))
 
 
-def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, *args):
+def inner_loop_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
     
@@ -70,8 +70,8 @@ def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, *args):
     sys.stdout = stdout_capture
     sys.stderr = stderr_capture
     
-    # bin_pso = copy.deepcopy(bin_pso_obj)
-    results = bin_pso_obj.optimize_distributed(*args)
+    # inner_pso = copy.deepcopy(inner_pso_obj)
+    results = inner_pso_obj.optimize_distributed(*args)
     return_dict[procnum] = {
             'results': results,
             'stdout': stdout_capture.getvalue(),
@@ -82,7 +82,7 @@ def inner_loop_wrapper(procnum, bin_pso_obj, return_dict, *args):
     sys.stderr = old_stderr
 
 
-def learner_wrapper(procnum, bin_pso_obj, return_dict, *args):
+def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
     
@@ -92,7 +92,7 @@ def learner_wrapper(procnum, bin_pso_obj, return_dict, *args):
     sys.stdout = stdout_capture
     sys.stderr = stderr_capture
     
-    results = bin_pso_obj.run_learner_once(*args)
+    results = inner_pso_obj.run_learner_once(*args)
     return_dict[procnum] = {
             'results': results,
             'stdout': stdout_capture.getvalue(),
@@ -222,7 +222,7 @@ class PSO():
         self.onetime_process = []
         self.onetime_job_id = []
         
-        # Parse .prop files to determine the size of CompositeDecisionVar and the dim of particles in BinaryPSO
+        # Parse .prop files to determine the size of CompositeDecisionVar and the dim of particles in InnerPSO
         with open(os.path.join(self.configs_dir, 'key_prop.txt'), 'r') as f:
             self.key_prop = f.read().strip()
             
@@ -233,19 +233,21 @@ class PSO():
             with open(fname, "w") as fh:
                 fh.write(f"{prop}, continuous\n")
             
+        # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        bin_pso_pop      = 15 #30
-        bin_pso_max_iter = 10 #50
-        # create an array of BinaryPSO instances (one per particle)
-        self.binary_psos = np.array(
-            [BinaryPSO(self.all_props, self.key_prop, bin_pso_pop, bin_pso_max_iter, early_termination=True) for _ in range(pop)],
+        inner_pso_pop      = 5 #15
+        inner_pso_max_iter = 8 #20 #10
+        # create an array of InnerPSO instances (one per particle)
+        self.inner_psos = np.array(
+            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, early_termination=True) for _ in range(pop)],
             dtype=object
         )
         self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object)
         self.skip_inner_loop = skip_inner_loop
-        # ... for BinaryPSO
+        # ...
         
         self.n_opt_vars = len(self.continuous_props)
+        CompositeDecisionVar.set_var_names(self.continuous_props)
         self.X = np.array([CompositeDecisionVar.random(self.n_opt_vars) for _ in range(pop)])    
         self.n_dim = self.X[0].n_dim                                              # = n_opt_vars * DecisionVar.n_dim
         self.X_hist = np.empty(dtype=CompositeDecisionVar, shape=(max_iter, pop)) # for plotting
@@ -413,7 +415,7 @@ class PSO():
                     if self.skip_inner_loop:
                         args = (
                             idx,
-                            self.binary_psos[idx],
+                            self.inner_psos[idx],
                             return_dict,
                             os.path.join(job_out_file_dir, f"particle_{idx}"),
                             leaner_input_filename,
@@ -423,7 +425,7 @@ class PSO():
                     else:
                         args = (
                             idx,
-                            self.binary_psos[idx],
+                            self.inner_psos[idx],
                             return_dict,
                             os.path.join(job_out_file_dir, f"particle_{idx}"),
                             leaner_input_filename,
@@ -453,22 +455,25 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if not inner_loop_processes[idx].is_alive():
-                    print("\n----- Inner process for BinPSO particle", idx, "has finished. Logs:")
-                    print(return_dict[idx]['stdout'], end="")
-                    if return_dict[idx]['stderr']:
-                        print(f"STDERR: {return_dict[idx]['stderr']}", end="")
-                        
-                    self.binary_psos[idx] = return_dict[idx]['results']
-                    results[idx] = self.binary_psos[idx].best_y
-                    self.inner_loop_gbest_x_init[idx] = self.binary_psos[idx].gbest_x
+                    print("\n----- InnerPSO for particle", idx, "has finished. Logs:")
+                    try:
+                        print(return_dict[idx]['stdout'], end="")
+                        if return_dict[idx]['stderr']:
+                            print(f"STDERR: {return_dict[idx]['stderr']}", end="")
+                            
+                        self.inner_psos[idx] = return_dict[idx]['results']
+                        results[idx] = self.inner_psos[idx].best_y
+                        self.inner_loop_gbest_x_init[idx] = self.inner_psos[idx].gbest_x
+                    except KeyError:
+                        print(f"Warning: No result for job {idx}")
                     
                     # Clean up learner input files
                     cmd = ["bash", "./cleanup.sh",  str(self.iter_num), str(idx)]
                     subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
-                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.binary_psos[idx].best_x.arr[i] == 1] + [self.binary_psos[idx].learner_args[-1]]
-                    print("----- Results from particle", idx, " BinPSO operation: inner_loop_iter", self.binary_psos[idx].iter_num, ", best score", self.binary_psos[idx].best_y, "at", args_chosen, "-----\n")
+                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.arr[i] == 1] + [self.inner_psos[idx].learner_args[-1]]
+                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, "-----\n")
                 
             time.sleep(5)
                     
@@ -570,6 +575,9 @@ class PSO():
         if len(self.gbest_y_hist) < patience + 1:
             return False
 
+        if abs(self.gbest_y) < 1e-12:
+            return False
+        
         recent = self.gbest_y_hist[-patience:]
         past = self.gbest_y_hist[-(patience+1)]
         

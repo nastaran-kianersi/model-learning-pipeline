@@ -4,12 +4,12 @@
 /job_scripts/
 /outputs/
 figures/
+tests/
 
 onetime_job.sh
 discretization_job.sh
 prepare_learner_input.sh
-learner_job_*.sh
-learner_job.sh
+learner_job_[0-9]*.sh
 tests/configs_*/optimizing_props_*.prop
 
 **/*.pyc

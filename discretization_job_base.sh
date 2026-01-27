@@ -1,8 +1,9 @@
 #SBATCH -c 1
 #SBATCH --mem=16G
-#SBATCH -t 0-00:20:00
+#SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
+##SBATCH --error=/dev/null
 ##SBATCH --wait
 # use sbatch --unbuffered to get the outputs in real-time (but it will bread the Pipeline)
 
@@ -65,9 +66,8 @@ uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") \
     "$propfile_local_addr" \
     --base-dir "$TMPDIR/CPD_Analysis_Outputs" \
     --data-timezone "Europe/Paris" \
-    --split-time "08:00" \
-    --enable-train-test-split --train-ratio=0.8 \
-    --alg-params "${uv_args[@]}"
+    --alg-params "${uv_args[@]}"  \
+    --enable-train-test-split --train-ratio=0.7
 deactivate
 
 # Read the file into an array (one element per line)

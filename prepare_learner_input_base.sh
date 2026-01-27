@@ -67,6 +67,7 @@ for i in "$@"; do
             chmod -R u+r "$dir"
             chmod -R u+w "$dir"
             rm -rf "$dir"
+            # source ./cleanup_scratch.sh "${prefix}_event_traces_${i}"
 
             # find "$dir" -xtype l -delete 2>/dev/null  # Remove dangling symlinks
             # chmod -R u+w "$dir" 2>/dev/null            # Fix permissions where possible
