@@ -27,8 +27,19 @@ echo "Prepared output filename: $outfile_addr"
 TrainEventTracePath="$SCRATCH_DIR/train_$EventTraceFilename"
 TestEventTracePath="$SCRATCH_DIR/test_$EventTraceFilename"
 
-learner_args=("$@")
-echo "${learner_args[@]}"
+timing_eps="$1"
+shift
+timing_eps_decay="$1"
+shift
+freq_eps="$1"
+shift
+freq_eps_decay="$1"
+shift
+tail_length="$1"
+shift
+
+event_sel_args=("$@")
+echo "${event_sel_args[@]}"
 
 echo "Learner job started at: $(date)"
 
@@ -43,11 +54,13 @@ if [[ "$train_test_split" = "false" ]]; then
     echo "Starting convert-format..."
     $exec_path convert-format -i $TrainEventTracePath -o "$TMPDIR/nibe.json.zst"
     echo "Starting select-and-merge..."
-    last_arg="${learner_args[@]: -1}"
-    # echo "Last arg: $last_arg, learner args: ${learner_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    last_arg="${event_sel_args[@]: -1}"
+    # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
+    $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
-    $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u #--parallel
+    $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u \
+        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" --tail-length="$tail_length"
+    
     echo "Starting validate-revision-score..."
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst" --init=$init --single-rooted #--parallel
 else
@@ -57,13 +70,14 @@ else
     echo "Starting convert-format for test..."
     $exec_path convert-format -i $TestEventTracePath -o "$TMPDIR/test_nibe.json.zst"
     echo "Starting select-and-merge for train..."
-    last_arg="${learner_args[@]: -1}"
-    # echo "Last arg: $last_arg, learner args: ${learner_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    last_arg="${event_sel_args[@]: -1}"
+    # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
+    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-overlapping
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${learner_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-overlapping
     echo "Starting learn..."
-    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u #--parallel
+    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u \
+        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" --tail-length="$tail_length"
 
     echo "Starting validate-revision-score with train data..."
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-rooted #--parallel

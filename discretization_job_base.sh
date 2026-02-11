@@ -64,6 +64,7 @@ cp "$propfile_addr" "$propfile_local_addr"
 # OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$propfile_local_addr" --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" --alg-params "${uv_args[@]}" | tail -n 1)
 uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") \
     "$propfile_local_addr" \
+    --split-time "08:00" \
     --base-dir "$TMPDIR/CPD_Analysis_Outputs" \
     --data-timezone "Europe/Paris" \
     --alg-params "${uv_args[@]}"  \

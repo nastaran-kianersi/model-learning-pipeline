@@ -59,7 +59,10 @@ def parse_property_file(filepath):
 
     return sorted(list(continuous)), sorted(list(discrete))
 
-
+##### 
+# Bypassing stdout_capture (commenting out old_std<sth> and sys.<sth> = old_std<sth>)
+# makes the child processes print directly to the console, which is useful for 
+# debugging but can be very messy.
 def inner_loop_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
@@ -82,7 +85,7 @@ def inner_loop_wrapper(procnum, inner_pso_obj, return_dict, *args):
     sys.stderr = old_stderr
 
 
-def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
+def one_iter_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
     
@@ -92,7 +95,7 @@ def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
     sys.stdout = stdout_capture
     sys.stderr = stderr_capture
     
-    results = inner_pso_obj.run_learner_once(*args)
+    results = inner_pso_obj.run_inner_loop_once(*args)
     return_dict[procnum] = {
             'results': results,
             'stdout': stdout_capture.getvalue(),
@@ -101,7 +104,7 @@ def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
     
     sys.stdout = old_stdout
     sys.stderr = old_stderr
-    
+##### 
 
 class PSO():
     r"""
@@ -209,7 +212,9 @@ class PSO():
 
     """
     def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
-                 w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, early_termination=False, verbose=False):
+                 w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, 
+                 skip_event_sel_opt=False, skip_learner_opt=False, 
+                 early_termination=False, verbose=False):
         
         self.exec_trace_addr = exec_trace_addr
         self.configs_dir = configs_dir
@@ -235,11 +240,13 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 5 #15
-        inner_pso_max_iter = 8 #20 #10
+        inner_pso_pop      = 4 #15
+        inner_pso_max_iter = 3 #20 #10
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
-            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, early_termination=True) for _ in range(pop)],
+            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
+                      skip_event_sel_opt=skip_event_sel_opt, 
+                      skip_learner_opt=skip_learner_opt, early_termination=True) for _ in range(pop)],
             dtype=object
         )
         self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object)
@@ -298,9 +305,9 @@ class PSO():
         job_out_file_dir = str(os.path.join(self.save_dir, ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
         
-        cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './onetime_job.sh']
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './runtime_scripts/onetime_job.sh']
         subprocess.run(cmd)         # waits for the job to be submitted
-        cmd = ["sbatch", "./onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
+        cmd = ["sbatch", "./runtime_scripts/onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
         self.onetime_process = proc
             
@@ -309,15 +316,6 @@ class PSO():
         self.onetime_job_id = int(job_id)
         self.onetime_job_out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
         print("Submitting one-time job", job_id, "for discrete variables.")
-            
-        # while True:
-        #     stdout = proc.stdout.readline()
-        #     if stdout.strip().startswith("Submitted batch job"):
-        #         job_id = stdout.strip().split()[-1]
-        #         job_ids_per_var.append(int(job_id))
-        #         print("Submitting job", job_id, "with args: ", ' '.join(args))
-        #         break
-        # ...  
         # Job will be done when we call self.onetime_process.wait() in call_scripts()
         
     # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf, and 2) discrete variable kernel
@@ -369,10 +367,10 @@ class PSO():
                 args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                         for key, value in vars(decisoin_var).items()]
                 
-                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './discretization_job.sh']
+                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './runtime_scripts/discretization_job.sh']
                 subprocess.run(cmd)
                 
-                cmd = ["sbatch", "--parsable", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
+                cmd = ["sbatch", "--parsable", "./runtime_scripts/discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
                 proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
                 processes_per_var.append(proc)
                 
@@ -401,14 +399,14 @@ class PSO():
                         self.onetime_process.wait()
                         self.onetime_process = None
             
-                    cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
+                    cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './runtime_scripts/prepare_learner_input.sh']
                     subprocess.run(cmd)
                 
                     # All jobs in the particle are done, now call the inner loop
                     # Call an sbatch script to prepare the input to the learner (i.e., inner loop)
                     # Then call the inner loop 
                     leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
-                    cmd = ["sbatch", "--quiet", "./prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    cmd = ["sbatch", "--quiet", "./runtime_scripts/prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
                     leaner_input_filename = leaner_input_foldername + ".zip"
                     
@@ -421,7 +419,7 @@ class PSO():
                             leaner_input_filename,
                             idx
                         )
-                        p = Process(target=learner_wrapper, args=args)
+                        p = Process(target=one_iter_wrapper, args=args)
                     else:
                         args = (
                             idx,
@@ -460,20 +458,24 @@ class PSO():
                         print(return_dict[idx]['stdout'], end="")
                         if return_dict[idx]['stderr']:
                             print(f"STDERR: {return_dict[idx]['stderr']}", end="")
-                            
+                    except KeyError:
+                        print(f"Warning: Cannot print logs for inner loop job {idx}")
+                        
+                    try:
                         self.inner_psos[idx] = return_dict[idx]['results']
                         results[idx] = self.inner_psos[idx].best_y
                         self.inner_loop_gbest_x_init[idx] = self.inner_psos[idx].gbest_x
-                    except KeyError:
-                        print(f"Warning: No result for job {idx}")
-                    
+                    except Exception as e:
+                        print(f"Error retrieving results for particle {idx}: {e}")
+                        
                     # Clean up learner input files
                     cmd = ["bash", "./cleanup.sh",  str(self.iter_num), str(idx)]
                     subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
-                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.arr[i] == 1] + [self.inner_psos[idx].learner_args[-1]]
-                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, "-----\n")
+                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
+                    learner_args_chosen = [val for val in self.inner_psos[idx].best_x.learner_decision_var.to_array(dtype=object)]
+                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, " and ", learner_args_chosen, "-----\n")
                 
             time.sleep(5)
                     

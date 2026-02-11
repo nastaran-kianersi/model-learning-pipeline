@@ -37,6 +37,7 @@ cp "$config_dir/onetime_props.prop" "$TMPDIR"/onetime_props.prop
 uv run event-trace-extraction-by-CPD \
     "$TMPDIR"/$(basename "$infile_addr") \
     "$TMPDIR"/onetime_props.prop \
+    --split-time "08:00" \
     --base-dir "$TMPDIR/CPD_Analysis_Outputs" \
     --data-timezone "Europe/Paris" \
     --enable-train-test-split --train-ratio=0.75
