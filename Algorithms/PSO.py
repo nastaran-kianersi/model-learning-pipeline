@@ -240,8 +240,8 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 4 #15
-        inner_pso_max_iter = 3 #20 #10
+        inner_pso_pop      = 20 #15
+        inner_pso_max_iter = 20 #20 #10
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
             [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
@@ -275,7 +275,11 @@ class PSO():
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * pop)
-        self.pbest_x = self.X.copy()                             # personal best location of every particle in history
+        
+        # self.pbest_x = self.X.deepcopy()                             # personal best location of every particle in history
+        # for i in range(self.pop):
+        #     self.pbest_x[i] = copy.deepcopy(self.X[i])
+        self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
         self.pbest_y = np.array([np.inf] * pop)                  # best image of every particle in history
         self.gbest_x = CompositeDecisionVarMean(self.pbest_x)    # global best location for all particles
         self.gbest_y = np.inf                                    # global best y for all particles
@@ -494,7 +498,10 @@ class PSO():
         '''
         self.need_update = self.pbest_y > self.Y
         # print("PSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
-        self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
+        # self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
+        for i in range(self.pop):
+            if self.need_update[i]:
+                self.pbest_x[i] = copy.deepcopy(self.X[i])
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
     def update_gbest(self):
@@ -536,6 +543,7 @@ class PSO():
         self.Y_hist[iter_num] = self.Y.copy()
         self.X_hist[iter_num] = self.X.copy()
         
+        print("PSO iteration {} completed. Global best fitness: {}".format(iter_num, self.gbest_y))
         if self.early_termination:
             if self.analyze_convergence():
                 print(f"Converged at iteration {iter_num}. Stopping early.")

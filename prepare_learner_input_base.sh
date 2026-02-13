@@ -28,11 +28,25 @@ SCRATCH_DIR="/global/scratch/hpc5649"
 TrainEventTracePath="$SCRATCH_DIR/train_$EventTraceFoldername"
 TestEventTracePath="$SCRATCH_DIR/test_$EventTraceFoldername"
 
+for i in "$@"; do
+    for prefix in "train" "test"; do
+        dir="$SCRATCH_DIR/${prefix}_event_traces_${i}"
+        # Discover the split directory name dynamically
+        if [[ -d "$dir" ]]; then
+            SplitDirName=$(ls -d "$dir"/*/ 2>/dev/null | head -1 | xargs basename)
+            break
+        else
+            echo "Train event trace path $TrainEventTracePath does not exist. Exiting."
+            exit 1
+        fi
+    done
+done
+
 # Create the unified directory
-mkdir -p "$TrainEventTracePath/split_with_same_suffix/continuous" 
-mkdir -p "$TrainEventTracePath/split_with_same_suffix/discrete"
-mkdir -p "$TestEventTracePath/split_with_same_suffix/continuous" 
-mkdir -p "$TestEventTracePath/split_with_same_suffix/discrete"
+mkdir -p "$TrainEventTracePath/$SplitDirName/continuous" 
+mkdir -p "$TrainEventTracePath/$SplitDirName/discrete"
+mkdir -p "$TestEventTracePath/$SplitDirName/continuous" 
+mkdir -p "$TestEventTracePath/$SplitDirName/discrete"
 
 train_exists=true
 test_exists=true
@@ -61,8 +75,8 @@ for i in "$@"; do
         fi
 
         # Copy continuous vars
-        if [[ -d "$dir/split_with_same_suffix/continuous" ]]; then
-            cp -r "$dir/split_with_same_suffix/continuous/"* "$DestPath"/split_with_same_suffix/continuous/ 2>/dev/null
+        if [[ -d "$dir/$SplitDirName/continuous" ]]; then
+            cp -r "$dir/$SplitDirName/continuous/"* "$DestPath"/$SplitDirName/continuous/ 2>/dev/null
             echo "Cleaning up directory ${dir} for job ID ${i} ..."
             chmod -R u+r "$dir"
             chmod -R u+w "$dir"
@@ -79,8 +93,8 @@ for i in "$@"; do
         fi
 
         # Copy discrete vars
-        if [[ -d "$dir/split_with_same_suffix/discrete" ]]; then
-            cp -r "$dir/split_with_same_suffix/discrete/"* "$DestPath"/split_with_same_suffix/discrete/ 2>/dev/null
+        if [[ -d "$dir/$SplitDirName/discrete" ]]; then
+            cp -r "$dir/$SplitDirName/discrete/"* "$DestPath"/$SplitDirName/discrete/ 2>/dev/null
         fi
     done
 done

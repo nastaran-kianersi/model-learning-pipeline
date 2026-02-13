@@ -182,12 +182,13 @@ class LearnerDecisionVar:
         new = LearnerDecisionVar.from_array(self_vals)
     
         # Assign all fields from the reconstructed instance
+        # print("before applying pbest handling: ", self)
         self.timing_eps = new.timing_eps
         self.timing_eps_decay = new.timing_eps_decay
         self.freq_eps = new.freq_eps
         self.freq_eps_decay = new.freq_eps_decay
         self.tail_length = new.tail_length
-        
+        # print("after applying pbest handling: ", self)
         return out_of_bound
     
 

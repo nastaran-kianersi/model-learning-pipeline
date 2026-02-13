@@ -1,8 +1,8 @@
 #water_tank_setpoint, discrete
-#force_dhw, discrete
+force_dhw, discrete
 #water_pump_2, discrete
 two_way_valve, discrete
 three_way_valve, discrete
-#thermo_off, discrete
+thermo_off, discrete
 defrost, discrete
 #baud_rate, discrete

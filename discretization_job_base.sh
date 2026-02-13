@@ -37,8 +37,12 @@ source ./.venv/bin/activate
 cd nfer_format_compatibility
 echo "The actual script started running at: $(date)"
 
-cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
-
+# cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
+if [ -d "$infile_addr" ]; then
+  cp -r "$infile_addr" "$TMPDIR"/
+else
+  cp "$infile_addr" "$TMPDIR"/
+fi
 propfile_name=$(basename "$propfile_addr")
 propfile_local_addr="$TMPDIR/$propfile_name"
 cp "$propfile_addr" "$propfile_local_addr"

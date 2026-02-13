@@ -19,20 +19,21 @@ export PYTHONUNBUFFERED=TRUE
 if [ -n "$1" ]; then
     infile_raw_path="$1"
 else
-    infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
+    # infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
+    infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test/"
     # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buckboost_close_vrefs_2/buckboost_close_vrefs_2.csv"   #"./c0l13r8vref18nominal2_10repeats.csv"
 fi
 
 if [ -n "$2" ]; then
     configs_dir_raw_path="$2"
 else
-    configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
-    # configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_3"
+    # configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
+    configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_3"
 fi
 
 # convert to absolute path
 input_addr=$(cd -- "$(dirname -- "$infile_raw_path")" && pwd)/$(basename -- "$infile_raw_path")
-#echo "Resolved input file path: $input_addr"
+echo "Resolved input file/folder path: $input_addr"
 #configs_dir=$(cd -- "$(dirname -- "$configs_dir_raw_path")" && pwd)
 configs_dir=$(cd $configs_dir_raw_path; pwd)
 #echo "Resolved configs dir: $configs_dir"

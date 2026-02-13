@@ -30,7 +30,12 @@ cd ../../Heat_Pump/
 source ./.venv/bin/activate
 cd nfer_format_compatibility
 echo "The actual script started running at: $(date)"
-cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
+# cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
+if [ -d "$infile_addr" ]; then
+  cp -r "$infile_addr" "$TMPDIR"/
+else
+  cp "$infile_addr" "$TMPDIR"/
+fi
 cp "$config_dir/onetime_props.prop" "$TMPDIR"/onetime_props.prop
 # --split-time "08:00"
 # OutputPath=$(uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") "$TMPDIR"/onetime_props.prop --base-dir "$TMPDIR/CPD_Analysis_Outputs" --data-timezone "Europe/Paris" | tail -n 1)
