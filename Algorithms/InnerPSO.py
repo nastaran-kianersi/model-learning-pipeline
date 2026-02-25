@@ -125,6 +125,7 @@ class InnerPSO():
         self.key_prop = key_prop
         index = self.event_sel_args.index(self.key_prop)      # move the key property to the end of the list
         self.event_sel_args.append(self.event_sel_args.pop(index))
+        self.event_sel_mapping = self.event_sel_args[:-1]  # the mapping for the binary decision variable in the event selection step (exclude the key property)
         
         self.skip_event_sel_opt = skip_event_sel_opt
         self.skip_learner_opt = skip_learner_opt
@@ -134,10 +135,10 @@ class InnerPSO():
         self.pop = pop                          # number of particles
         self.n_dim_event_sel = len(event_sel_args)  - 1   # number of variables to choose from in the event selection step (excluding the key property)
         self.n_dim_learner   = LearnerDecisionVar.n_dim     # number of variables to optimize in the learner step
-        self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel) for _ in range(pop)])
+        self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel, self.event_sel_mapping) for _ in range(pop)])
         if skip_event_sel_opt:
             for i in range(pop):
-                self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel))
+                self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel, self.event_sel_mapping)) 
         if skip_learner_opt:
             for i in range(pop):
                 self.X[i].learner_decision_var = self.default_learner_decision_var
@@ -164,11 +165,11 @@ class InnerPSO():
         self.prev_out_of_bound_learner = [np.array([False] * self.n_dim_learner) for _ in range(self.pop)]  # for handling boundary conditions in learner decision variables
         
         self.Y = np.array([0] * pop)
-        # self.pbest_x = copy.deepcopy(self.X)                  # personal best location of every particle in history
         self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
         self.pbest_y = np.array([np.inf] * pop)         # best image of every particle in history
         self.gbest_x = InnerLoopDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].bin_decision_var.arr.copy() for i in range(pop)]), axis=0)),
-                                                                np.mean(np.array([self.pbest_x[i].learner_decision_var.to_array() for i in range(pop)]), axis=0))  # global best location among all particles
+                                                                np.mean(np.array([self.pbest_x[i].learner_decision_var.to_array() for i in range(pop)]), axis=0),
+                                                                self.event_sel_mapping)  # global best location among all particles
         self.gbest_y = np.inf                           # global best y for all particles
         self.gbest_y_hist = []                          # gbest_y of every iteration
         
@@ -191,39 +192,30 @@ class InnerPSO():
         self.iter_num = 0
         self.w = self.init_w
         self.cp, self.cg = self.init_cp, self.init_cg
-        self.update_coeffs()
         
         if gbest_x_init is None:
             # print("gbest_x_init is None, randomly initializing particles")
-            self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel) for _ in range(self.pop)])
+            self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel, self.event_sel_mapping) for _ in range(self.pop)])
             if self.skip_event_sel_opt:
                 for i in range(self.pop):
-                    self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel))
+                    self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel), self.event_sel_mapping)
             if self.skip_learner_opt:
                 for i in range(self.pop):
                     self.X[i].learner_decision_var = self.default_learner_decision_var
             
             self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
-            # self.pbest_x = copy.deepcopy(self.X)                    # personal best location of every particle in history
-            # for i in range(self.pop):
-                # self.pbest_x[i] = copy.deepcopy(self.X[i])
             self.gbest_x = InnerLoopDecisionVar.from_array(np.round(np.mean(np.array([self.pbest_x[i].bin_decision_var.arr.copy() for i in range(self.pop)]), axis=0)),
-                                                                np.mean(np.array([self.pbest_x[i].learner_decision_var.to_array() for i in range(self.pop)]), axis=0))
+                                                           np.mean(np.array([self.pbest_x[i].learner_decision_var.to_array() for i in range(self.pop)]), axis=0),
+                                                           self.event_sel_mapping)
 
         else:
             # print("gbest_x_init is provided, initializing particles around gbest_x_init: ", gbest_x_init)
             self.gbest_x = copy.deepcopy(gbest_x_init)
             self.X = np.array([InnerLoopDecisionVar.from_array(self.gbest_x.bin_decision_var.arr.copy(),
-                                                                 self.gbest_x.learner_decision_var.to_array()) for _ in range(self.pop)])
+                                                               self.gbest_x.learner_decision_var.to_array(),
+                                                               self.event_sel_mapping) for _ in range(self.pop)])
             self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
-            # self.pbest_x = copy.deepcopy(self.X)                    # personal best location of every particle in history
-            # for i in range(self.pop):
-                # self.pbest_x[i] = copy.deepcopy(self.X[i])
-                
-        # print("self.X: ", self.X)
-        # print("self.gbest_x: ", self.gbest_x)
-        # print("self.pbest_x in reset function: ", self.pbest_x)
-        
+            
         self.V_event_sel = np.random.uniform(low=-self.v_max, high=self.v_max, size=(self.pop, self.n_dim_event_sel))  # speed of particles
         self.V_learner = np.random.uniform(low=-self.v_high, high=self.v_high, size=(self.pop, self.n_dim_learner))
         
@@ -291,16 +283,12 @@ class InnerPSO():
                 tmp_X[i][np.random.randint(self.n_dim_event_sel)] = 1
                 
         for i in range(self.pop):
-            self.X[i].bin_decision_var = BinaryDecisionVar.from_array(tmp_X[i])
+            self.X[i].bin_decision_var = BinaryDecisionVar.from_array(tmp_X[i], mapping=self.event_sel_mapping)
         
     def update_X_learner(self):
         for i in range(self.pop):
             self.X[i].learner_decision_var = LearnerDecisionVar.from_array(self.X[i].learner_decision_var.to_array() + self.V_learner[i])
-            # print("before handling boundary: ", self.X[i].learner_decision_var)
-            # print("pbset_x: ", self.pbest_x[i].learner_decision_var)
             self.prev_out_of_bound_learner[i] = self.X[i].learner_decision_var.handle_boundary_pBest_dim(self.pbest_x[i].learner_decision_var.to_array())
-            # print("after handling boundary: ", self.X[i].learner_decision_var, "out of bound dims: ", self.prev_out_of_bound_learner[i])
-            # print("pbset_x: ", self.pbest_x[i].learner_decision_var)
             
     def update_coeffs(self):
         if self.auto_coeffs:
@@ -347,7 +335,7 @@ class InnerPSO():
                 
             time.sleep(5)
              
-        self.gbest_x = InnerLoopDecisionVar(BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel)),
+        self.gbest_x = InnerLoopDecisionVar(BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel), mapping=self.event_sel_mapping),
                                             learner_decision_var=self.default_learner_decision_var)  # all variables used
         self.gbest_y = result
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
@@ -361,7 +349,6 @@ class InnerPSO():
         results = [0] * self.pop
         
         for idx, x in enumerate(self.X):
-            x = copy.copy(x)
             # event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] + [self.event_sel_args[-1]] if not self.skip_event_sel_opt else self.event_sel_args
             # learner_args = [str(arg) for _, arg in enumerate(x.learner_decision_var.to_array(dtype=object))] if not self.skip_learner_opt else self.default_learner_args
             event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] + [self.event_sel_args[-1]]
@@ -376,7 +363,7 @@ class InnerPSO():
             # stdout = proc.stdout.readline()
             # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_id = proc.stdout.strip()
-            print(f"Submitting inner job {job_id} with args: {event_sel_args}")
+            print(f"Submitting inner job {job_id} with args: {event_sel_args} and {learner_args}")
             job_ids.append(int(job_id))
             
         # Check for finished jobs by checking their output files
@@ -410,17 +397,13 @@ class InnerPSO():
         :return:
         '''
         self.need_update = self.pbest_y > self.Y
-        # print("InnerPSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
-        # [:, np.newaxis]
         # print("need_update: ", self.need_update)
-        # print("pbest_x before update: ", self.pbest_x)
-        # print("X: ", self.X)
-        # self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
         for i in range(self.pop):
             if self.need_update[i]:
+                # print(f"Updating pbest for particle {i} from {self.pbest_x[i]} to {self.X[i]}")
                 self.pbest_x[i] = copy.deepcopy(self.X[i])
-        # print("pbest_x after update: ", self.pbest_x)
-        # print("X: ", self.X)
+                # print("After update, pbest_x: ", self.pbest_x[i])
+        # print("self.Y: ", self.Y, ", pbest_y before update: ", self.pbest_y)
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
     def update_gbest(self):
@@ -429,13 +412,16 @@ class InnerPSO():
         :return:
         '''
         idx_min = self.pbest_y.argmin()
+        # print("idx_min: ", idx_min, "self.pbest_y: ", self.pbest_y)
+        # print("pbest_y[idx_min]: ", self.pbest_y[idx_min], "current gbest_y: ", self.gbest_y)
         # #print("InnerPSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
-            # print("--- Updating gbest_y; X before:", self.X)
-            self.gbest_x = self.X[idx_min]
-            # print("--- X after:", self.X)
+            # print("Updating gbest_x: from ", self.gbest_x, " to ", self.X[idx_min])
+            # print("AND Updating gbest: from ", self.gbest_y, " to ", self.pbest_y[idx_min])
+            self.gbest_x = copy.deepcopy(self.X[idx_min])
             self.gbest_y = self.pbest_y[idx_min]
-            # print("--- gbest_x updated: ", self.gbest_x, "idx_min: ", idx_min)
+        # else:
+        #     print("NOT Updating gbest")
 
     def recorder(self):
         if not self.record_mode:
@@ -446,29 +432,15 @@ class InnerPSO():
     
     def iterate(self, iter_num, save_dir, event_trace_filename, parent_particle_idx):
         converged = False
-        
         self.iter_num = iter_num
-        # print(f"Iter {iter_num}, Coeffs: w = {self.w}, cp = {self.cp}, cg = {self.cg}")
-        # print("----------- Step 1:")
-        # for i in range(self.pop):
-        #     print("X: ", self.X[i], ", pbest: ", self.pbest_x[i], ", out of bounds: ", self.prev_out_of_bound_learner[i])
+        
         self.update_V()
         self.recorder()
-        # print("----------- Step 2:")
-        # for i in range(self.pop):
-        #     print("X: ", self.X[i], ", pbest: ", self.pbest_x[i], ", out of bounds: ", self.prev_out_of_bound_learner[i])
         self.update_X()
-        # print("----------- Step 3:")
-        # for i in range(self.pop):
-        #     print("X: ", self.X[i], ", pbest: ", self.pbest_x[i], ", out of bounds: ", self.prev_out_of_bound_learner[i])
         self.call_scripts(save_dir, event_trace_filename, parent_particle_idx) # Call the jobs and wait for them to finish, then the returned value would be the value
-                            # of y for each particle. Run a separate job for each particle.
+                                                                               # of y for each particle. Run a separate job for each particle.
         self.update_pbest()
-        # print("----------- Step 4:")
-        # for i in range(self.pop):
-        #     print("X: ", self.X[i], ", pbest: ", self.pbest_x[i])
         self.update_gbest()
-        # print("----------- Step 5: X: ", self.X)
         self.update_coeffs()
         
         # if self.verbose:
@@ -494,11 +466,12 @@ class InnerPSO():
                 break
             
         self.best_x, self.best_y = self.gbest_x, self.gbest_y
-        return self #self.best_x, self.best_y
+        # print("best_x: ", self.best_x, "best_y: ", self.best_y)
+        return self
     
     def analyze_convergence(self):
         try:
-            gbest_converged = self.has_converged_gbest(patience=self.max_iter//2)
+            gbest_converged = self.has_converged_gbest(patience=min(5, self.max_iter//4))
             return gbest_converged
         
         except Exception as e:

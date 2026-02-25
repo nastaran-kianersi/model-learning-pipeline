@@ -240,8 +240,8 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 20 #15
-        inner_pso_max_iter = 20 #20 #10
+        inner_pso_pop      = 6
+        inner_pso_max_iter = 5
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
             [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
@@ -276,14 +276,12 @@ class PSO():
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * pop)
         
-        # self.pbest_x = self.X.deepcopy()                             # personal best location of every particle in history
-        # for i in range(self.pop):
-        #     self.pbest_x[i] = copy.deepcopy(self.X[i])
         self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
         self.pbest_y = np.array([np.inf] * pop)                  # best image of every particle in history
         self.gbest_x = CompositeDecisionVarMean(self.pbest_x)    # global best location for all particles
         self.gbest_y = np.inf                                    # global best y for all particles
         self.gbest_y_hist = []                                   # gbest_y of every iteration
+        self.gbest_y_idx = -1
         
         self.update_gbest()
         self.update_coeffs()
@@ -361,7 +359,7 @@ class PSO():
         processes = []
         
         for idx, x in enumerate(self.X):
-            x = copy.copy(x)
+            x = copy.deepcopy(x)
             decision_vars = x.decision_vars
             job_ids_per_var = []            
             processes_per_var = []
@@ -432,7 +430,7 @@ class PSO():
                             os.path.join(job_out_file_dir, f"particle_{idx}"),
                             leaner_input_filename,
                             idx,
-                            self.inner_loop_gbest_x_init[idx]
+                            None #self.inner_loop_gbest_x_init[idx]
                         )
                         p = Process(target=inner_loop_wrapper, args=args)
                     
@@ -477,7 +475,8 @@ class PSO():
                     subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
-                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
+                    self.inner_psos[idx].event_sel_args
+                    args_chosen = [self.inner_psos[idx].event_sel_args[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
                     learner_args_chosen = [val for val in self.inner_psos[idx].best_x.learner_decision_var.to_array(dtype=object)]
                     print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, " and ", learner_args_chosen, "-----\n")
                 
@@ -509,10 +508,11 @@ class PSO():
         global best
         :return:
         '''
-        idx_min = self.pbest_y.argmin()
+        idx_min = self.pbest_y.argmin() # What if there are multiple particles with the same best fitness? We can just take the first one (argmin does that), but we should be aware of this when analyzing results.
         # print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
-            self.gbest_x = self.X[idx_min]
+            self.gbest_y_idx = idx_min
+            self.gbest_x = copy.deepcopy(self.X[idx_min])
             self.gbest_y = self.pbest_y[idx_min]
 
     def recorder(self):
@@ -566,7 +566,9 @@ class PSO():
         try:
             gbest_converged = self.has_converged_gbest()
             pos_converged, vel_converged = self.has_converged_particles()
-            return gbest_converged and (pos_converged or vel_converged)
+            # was "and" before, but it's too strict, we can consider it converged if either gbest
+            # is stable or particles are coalescing/velocity collapsing
+            return gbest_converged or (pos_converged or vel_converged)
         
         except Exception as e:
             traceback.print_exc()

@@ -6,23 +6,30 @@ import operator
 
 
 class BinaryDecisionVar:
-    def __init__(self, n_dim):
+    def __init__(self, n_dim, mapping=None):
         self.n_dim = n_dim
+        self.mapping = mapping
         # self.arr = np.random.randint(0, 2, size=n_dim)  # Random binary values (0 or 1)
         self.arr = np.random.choice([0, 1], size=n_dim)
     
     @staticmethod
-    def random(n_dim):
-        return BinaryDecisionVar(n_dim)
+    def random(n_dim, mapping=None):
+        return BinaryDecisionVar(n_dim, mapping=mapping)
     
     @classmethod
-    def from_array(cls, arr):
-        instance = cls(len(arr))
+    def from_array(cls, arr, mapping=None):
+        instance = cls(len(arr), mapping=mapping)
         instance.arr = np.array(arr, copy=True)
+        instance.mapping = mapping
         return instance
     
     def __repr__(self):
-        return f"BinaryDecisionVar(arr={self.arr})"
+        if self.mapping is not None:
+            active_indices = np.where(self.arr == 1)[0]
+            active_events = [self.mapping[i] for i in active_indices]
+            return f"BinaryDecisionVar(arr={self.arr}, active_events={active_events})"
+        else:
+            return f"BinaryDecisionVar(arr={self.arr})"
     
     def __eq__(self, other):
         """Overrides the default implementation"""
@@ -33,8 +40,8 @@ class BinaryDecisionVar:
     
 class LearnerDecisionVar:
     n_dim = 5
-    lb = np.array([0, 0, 0, 0, 0])
-    ub = np.array([1, 1, 1, 1, 100]) # np.iinfo(np.int64).max
+    lb = np.array([0, 0, 0, 0, 0]) # Interpret 0 as infinity (Null) in the learner script
+    ub = np.array([1, 1, 1, 1, 10]) # np.iinfo(np.int64).max
     # b_trunc = int(np.trunc(b)), b_ceil = int(np.ceil(b))
     
     @staticmethod
@@ -194,8 +201,8 @@ class LearnerDecisionVar:
 
 class InnerLoopDecisionVar:
     @staticmethod
-    def random(bin_n_dim):
-        bin_decision_var = BinaryDecisionVar.random(bin_n_dim)
+    def random(bin_n_dim, bin_mapping=None):
+        bin_decision_var = BinaryDecisionVar.random(bin_n_dim, mapping=bin_mapping)
         learner_decision_var = LearnerDecisionVar.random()
         return InnerLoopDecisionVar(bin_decision_var, learner_decision_var)
     
@@ -208,8 +215,8 @@ class InnerLoopDecisionVar:
                 f"  learner_decision_var={self.learner_decision_var}\n)")
         
     @classmethod
-    def from_array(cls, bin_arr, learner_arr):
-        bin_decision_var = BinaryDecisionVar.from_array(bin_arr)
+    def from_array(cls, bin_arr, learner_arr, bin_mapping=None):
+        bin_decision_var = BinaryDecisionVar.from_array(bin_arr, mapping=bin_mapping)
         learner_decision_var = LearnerDecisionVar.from_array(learner_arr)
         return cls(bin_decision_var, learner_decision_var)
     

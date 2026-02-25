@@ -3,7 +3,7 @@
 #SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-##SBATCH --error=/dev/null
+#SBATCH --error=/dev/null
 ##SBATCH --wait
 
 infile_arg="$1"
@@ -58,8 +58,13 @@ if [[ "$train_test_split" = "false" ]]; then
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
     $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
+    if [ "$tail_length" -eq 0 ]; then
+        tail_length_opt=""
+    else
+        tail_length_opt="--tail-length=$tail_length"
+    fi
     $exec_path learn -i "$TMPDIR/filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u \
-        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" --tail-length="$tail_length"
+        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" $tail_length_opt
     
     echo "Starting validate-revision-score..."
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst" --init=$init --single-rooted #--parallel
@@ -72,12 +77,17 @@ else
     echo "Starting select-and-merge for train..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-overlapping
+    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-overlapping
+    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
+    if [ "$tail_length" -eq 0 ]; then
+        tail_length_opt=""
+    else
+        tail_length_opt="--tail-length=$tail_length"
+    fi
     $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u \
-        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" --tail-length="$tail_length"
+        --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" $tail_length_opt
 
     echo "Starting validate-revision-score with train data..."
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-rooted #--parallel

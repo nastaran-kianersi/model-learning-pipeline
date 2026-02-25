@@ -44,51 +44,23 @@ print(f"Output directory: {output_dir}\n\n")
 ## -------------------------
 
 
-## LearnerDecisionVar test
-def test_learner_decision_var_add_subtract():
-    """Test LearnerDecisionVar addition and subtraction operations."""
-    # Create two random LearnerDecisionVar objects
-    ldv1 = LearnerDecisionVar.random()
-    ldv2 = LearnerDecisionVar.random()
-    ldv_best = LearnerDecisionVar.random()  # This is just for testing, not used in the operations
-    
-    # Add the two objects
-    result_add = ldv1 + ldv2
-    
-    # Subtract the second from the first
-    result_subtract = ldv1 - ldv2
-    
-    print("LearnerDecisionVar 1:", ldv1)
-    print("LearnerDecisionVar 2:", ldv2)
-    print("Best LearnerDecisionVar:", ldv_best)
-    print("Result of addition:", result_add)
-    print("Result of subtraction:", result_subtract)
-    
-    add_outofbounds = result_add.find_out_of_bound_dims()
-    subtract_outofbounds = result_subtract.find_out_of_bound_dims()
-    print("Is addition result out of bounds?", add_outofbounds)
-    print("Is subtraction result out of bounds?", subtract_outofbounds)
-
-    print("Substituing out of bounds dimensions with random values within bounds:")
-    add_outofbounds2 = result_add.handle_boundary_pBest_dim(ldv_best)
-    print("Out of bounds: ", add_outofbounds2)
-    print(result_add)
-    subtract_outofbounds2 = result_subtract.handle_boundary_pBest_dim(ldv_best)
-    print("Out of bounds: ", subtract_outofbounds2)
-    print(result_subtract)
-  
-
 # exec_trace_addr is the input directory
 # output_dir is the output directory
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, configs_dir=configs_dir, output_dir=output_dir,
-          pop=32, max_iter=40, w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, 
+          pop=4, max_iter=5, auto_coeffs=True, skip_inner_loop=False, 
           skip_event_sel_opt=False, skip_learner_opt=False, early_termination=True) #pop=128, max_iter=100   # pop=30, max_iter=30
 best_x, best_y = pso.optimize_distributed()
 pso.analyze_convergence()
-print("Best solution:", best_x)
+print("** Best solution: **")
 print("Best objective value:", best_y)
+print("-- Outer loop best_x:", best_x)
+print("-- Inner loop best_x:")
+print("Learner Params:", pso.inner_loop_gbest_x_init[pso.gbest_y_idx].learner_decision_var)
+indices = np.where(pso.inner_loop_gbest_x_init[pso.gbest_y_idx].bin_decision_var.arr == 1)
+chosen_events = list(np.array(pso.inner_psos[0].event_sel_args)[indices[0]]) + [pso.inner_psos[0].event_sel_args[-1]]
+print("Chosen events:", chosen_events)
 
 # pso.visualize()
 pso.run_for_xbest()
