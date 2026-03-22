@@ -4,6 +4,7 @@
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 ##SBATCH --error=/dev/null
+##SBATCH --output=/dev/null
 ##SBATCH --wait
 # use sbatch --unbuffered to get the outputs in real-time (but it will bread the Pipeline)
 

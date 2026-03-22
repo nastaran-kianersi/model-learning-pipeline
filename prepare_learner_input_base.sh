@@ -36,8 +36,8 @@ for i in "$@"; do
             SplitDirName=$(ls -d "$dir"/*/ 2>/dev/null | head -1 | xargs basename)
             break
         else
-            echo "Train event trace path $TrainEventTracePath does not exist. Exiting."
-            exit 1
+            echo "Directory $dir does not exist. Exiting."
+            # exit 1
         fi
     done
 done
@@ -78,8 +78,8 @@ for i in "$@"; do
         if [[ -d "$dir/$SplitDirName/continuous" ]]; then
             cp -r "$dir/$SplitDirName/continuous/"* "$DestPath"/$SplitDirName/continuous/ 2>/dev/null
             echo "Cleaning up directory ${dir} for job ID ${i} ..."
-            chmod -R u+r "$dir"
-            chmod -R u+w "$dir"
+            # chmod -R u+r "$dir"
+            # chmod -R u+w "$dir"
             rm -rf "$dir"
             # source ./cleanup_scratch.sh "${prefix}_event_traces_${i}"
 

@@ -99,6 +99,7 @@ def is_job_completed_sacct(job_id):
 
     except subprocess.CalledProcessError as e:
         print(f"Error checking job status with sacct: {e}")
+        print(f"stderr: {e.stderr}")
         return False
    
     

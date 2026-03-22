@@ -138,7 +138,7 @@ class InnerPSO():
         self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel, self.event_sel_mapping) for _ in range(pop)])
         if skip_event_sel_opt:
             for i in range(pop):
-                self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel, self.event_sel_mapping)) 
+                self.X[i].bin_decision_var = BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel), self.event_sel_mapping)
         if skip_learner_opt:
             for i in range(pop):
                 self.X[i].learner_decision_var = self.default_learner_decision_var

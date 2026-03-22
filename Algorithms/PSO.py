@@ -240,8 +240,8 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 6
-        inner_pso_max_iter = 5
+        inner_pso_pop      = 15
+        inner_pso_max_iter = 15
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
             [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
@@ -249,7 +249,11 @@ class PSO():
                       skip_learner_opt=skip_learner_opt, early_termination=True) for _ in range(pop)],
             dtype=object
         )
-        self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object)
+        # The same as x_inner defined later but in a different format, used for initiating
+        # the inner loop with the best parameters found in the previous outer loop iteration
+        # for each particle. Format is CompositeDecisionVar instead of (events_chosen, learner_args_chosen).
+        # It's flawed, though; it uses the previous iteration's best instead of the overall best
+        self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object) 
         self.skip_inner_loop = skip_inner_loop
         # ...
         
@@ -276,12 +280,15 @@ class PSO():
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
         self.Y = np.array([0] * pop)
         
+        self.x_inner = np.array([(None, None)] * pop)        # best inner x for current outer iteration in the form of (events_chosen, learner_args_chosen) for each particle
+        self.pbest_x_inner = np.array([(None, None)] * pop)  # best personal best inner x among all outer iterations so far in the form of (events_chosen, learner_args_chosen) for each particle
+        self.gbest_x_inner = (None, None)                    # global best inner x EVER SEEN SO FAR ANYWHERE in the form of (events_chosen, learner_args_chosen)
+        
         self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
         self.pbest_y = np.array([np.inf] * pop)                  # best image of every particle in history
         self.gbest_x = CompositeDecisionVarMean(self.pbest_x)    # global best location for all particles
         self.gbest_y = np.inf                                    # global best y for all particles
         self.gbest_y_hist = []                                   # gbest_y of every iteration
-        self.gbest_y_idx = -1
         
         self.update_gbest()
         self.update_coeffs()
@@ -430,7 +437,7 @@ class PSO():
                             os.path.join(job_out_file_dir, f"particle_{idx}"),
                             leaner_input_filename,
                             idx,
-                            None #self.inner_loop_gbest_x_init[idx]
+                            self.inner_loop_gbest_x_init[idx]
                         )
                         p = Process(target=inner_loop_wrapper, args=args)
                     
@@ -475,10 +482,10 @@ class PSO():
                     subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
-                    self.inner_psos[idx].event_sel_args
-                    args_chosen = [self.inner_psos[idx].event_sel_args[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
+                    events_chosen = [self.inner_psos[idx].event_sel_args[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
                     learner_args_chosen = [val for val in self.inner_psos[idx].best_x.learner_decision_var.to_array(dtype=object)]
-                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, " and ", learner_args_chosen, "-----\n")
+                    self.x_inner[idx] = (events_chosen, learner_args_chosen)
+                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", events_chosen, " and ", learner_args_chosen, "-----\n")
                 
             time.sleep(5)
                     
@@ -501,6 +508,7 @@ class PSO():
         for i in range(self.pop):
             if self.need_update[i]:
                 self.pbest_x[i] = copy.deepcopy(self.X[i])
+                self.pbest_x_inner[i] = copy.deepcopy(self.x_inner[i])
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
     def update_gbest(self):
@@ -511,7 +519,7 @@ class PSO():
         idx_min = self.pbest_y.argmin() # What if there are multiple particles with the same best fitness? We can just take the first one (argmin does that), but we should be aware of this when analyzing results.
         # print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
-            self.gbest_y_idx = idx_min
+            self.gbest_x_inner = copy.deepcopy(self.pbest_x_inner[idx_min])
             self.gbest_x = copy.deepcopy(self.X[idx_min])
             self.gbest_y = self.pbest_y[idx_min]
 

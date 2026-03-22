@@ -3,7 +3,7 @@
 #SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-#SBATCH --error=/dev/null
+##SBATCH --error=/dev/null
 ##SBATCH --wait
 
 infile_arg="$1"
@@ -95,5 +95,7 @@ else
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init --single-rooted #--parallel
 fi
 
-#cp -r "$TMPDIR/nibe.dot" "$SCRATCH_DIR"/"$outfile_addr"
+echo "Rendering automaton..."
+$exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot"
+cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
 echo "Learner job ended at: $(date)"
