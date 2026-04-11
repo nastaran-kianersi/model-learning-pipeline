@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 import traceback
+import random
 
 
 def parse_property_file(filepath):
@@ -241,7 +242,7 @@ class PSO():
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
         inner_pso_pop      = 15
-        inner_pso_max_iter = 15
+        inner_pso_max_iter = 10
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
             [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
@@ -373,6 +374,7 @@ class PSO():
             
             for ith_var, decisoin_var in enumerate(decision_vars):
                 decisoin_var.rbf_gamma = float(decisoin_var.rbf_gamma) if decisoin_var.kernel == KernelType.RBF else 0.0
+                ## e.g. ['min_size=100', 'penalty=500', 'kernel=linear', 'rbf_gamma=0']
                 args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
                         for key, value in vars(decisoin_var).items()]
                 
@@ -389,6 +391,7 @@ class PSO():
                 
             job_ids.append(job_ids_per_var)
             processes.append(processes_per_var)
+            time.sleep(np.random.randint(2) + 1) # add some random sleep to avoid submitting all jobs at the same time, which can be hard on Slurm
     
         
         # Each particle submits multiple jobs (one per discrete variable)
@@ -417,7 +420,7 @@ class PSO():
                     leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
                     cmd = ["sbatch", "--quiet", "./runtime_scripts/prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
-                    leaner_input_filename = leaner_input_foldername + ".zip"
+                    leaner_input_filename = leaner_input_foldername + ".json.zst"
                     
                     if self.skip_inner_loop:
                         args = (
@@ -453,7 +456,7 @@ class PSO():
                     if all(p is None for p in processes[idx]):
                         processes[idx] = []
                                                        
-            time.sleep(5)
+            time.sleep(2)
         
         # Check for the inner loops of particles and collect their results
         pending_particles = list(range(self.pop))
@@ -487,7 +490,7 @@ class PSO():
                     self.x_inner[idx] = (events_chosen, learner_args_chosen)
                     print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", events_chosen, " and ", learner_args_chosen, "-----\n")
                 
-            time.sleep(5)
+            time.sleep(2)
                     
         self.Y = np.array(results)  
         return self.Y

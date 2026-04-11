@@ -1,6 +1,6 @@
 #SBATCH -c 2
 #SBATCH --mem=8G
-#SBATCH -t 0-00:15:00
+#SBATCH -t 0-00:30:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 ##SBATCH --error=/dev/null
@@ -51,12 +51,10 @@ exec_path=build/distributions/heat-pump-mining-0.0.0-68-06d845e-SNAPSHOT/bin/hea
 echo "The actual script started running at: $(date)"
 if [[ "$train_test_split" = "false" ]]; then
     # Train only (no test file)
-    echo "Starting convert-format..."
-    $exec_path convert-format -i $TrainEventTracePath -o "$TMPDIR/nibe.json.zst"
     echo "Starting select-and-merge..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/nibe.json.zst" -o "$TMPDIR/filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
     if [ "$tail_length" -eq 0 ]; then
         tail_length_opt=""
@@ -70,32 +68,32 @@ if [[ "$train_test_split" = "false" ]]; then
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/filtered.json.zst" --init=$init --single-rooted #--parallel
 else
     # Train and test
-    echo "Starting convert-format for train..."
-    $exec_path convert-format -i $TrainEventTracePath -o "$TMPDIR/train_nibe.json.zst"
-    echo "Starting convert-format for test..."
-    $exec_path convert-format -i $TestEventTracePath -o "$TMPDIR/test_nibe.json.zst"
     echo "Starting select-and-merge for train..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
-    $exec_path select-and-merge -i "$TMPDIR/train_nibe.json.zst" -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i "$TMPDIR/test_nibe.json.zst" -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
+    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" -s "$last_arg" --use-all-non-overlapping
     echo "Starting learn..."
     if [ "$tail_length" -eq 0 ]; then
         tail_length_opt=""
     else
         tail_length_opt="--tail-length=$tail_length"
     fi
-    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init -d -u \
+    $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init --parallel -d -u \
         --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" $tail_length_opt
 
     echo "Starting validate-revision-score with train data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-rooted #--parallel
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-best --parallel
     echo "Starting validate-revision-score with test data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init --single-rooted #--parallel
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init --single-best --parallel
 fi
 
 echo "Rendering automaton..."
-$exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot"
-cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
+# revision_score=$(grep -oP 'revision_score["\s:=]+\K[0-9.]+' <<< "$(history 1)" | tail -1)
+# echo "Revision score: $revision_score"
+# $exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot"
+# cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
+WAIT_TIME=$(($RANDOM % 5 + 1))
+sleep $WAIT_TIME
 echo "Learner job ended at: $(date)"

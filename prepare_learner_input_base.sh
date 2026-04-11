@@ -1,7 +1,7 @@
 ##SBATCH --output=/dev/null
 ##SBATCH --error=/dev/null
 #SBATCH -c 1
-#SBATCH --mem=50
+#SBATCH --mem=1G
 #SBATCH -t 0-00:10:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
@@ -126,3 +126,23 @@ rm -rf "$TestEventTracePath"
 #    echo "Cleaning up directory ${dir} for suffix ${i} ..."
 #    rm -rf "$dir"
 # done
+
+# Automata Learning
+module load java/21.0.1
+exec_path=/global/home/hpc5649/hpm_automata_learning/heat-pump-mining-v4/build/distributions/heat-pump-mining-0.0.0-93-de0c128-SNAPSHOT/bin/heat-pump-mining
+
+if [ "$train_exists" = true ]; then
+    echo "Starting convert-format for train..."
+    $exec_path convert-format -i "$(basename "$TrainEventTracePath").zip" -o "$(basename "$TrainEventTracePath").json.zst"
+    rm "$(basename "$TrainEventTracePath").zip"
+else
+    echo "No train event traces to convert to .json.zst."
+fi
+
+if [ "$test_exists" = true ]; then
+    echo "Starting convert-format for test..."
+    $exec_path convert-format -i "$(basename "$TestEventTracePath").zip" -o "$(basename "$TestEventTracePath").json.zst"
+    rm "$(basename "$TestEventTracePath").zip"
+else
+    echo "No test event traces to convert to .json.zst."
+fi

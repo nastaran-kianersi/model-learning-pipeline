@@ -3,6 +3,8 @@
 # @Time    : 2019/8/20
 # @Author  : github.com/guofei9987 - Modified by Nastaran Kianersi
 
+import random
+
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
@@ -50,10 +52,12 @@ def parse_revision_score_table(lines_iter):
         if not line.strip():
             continue
             
-        # End of table: lines starting with < (like <average>, <stddev>)
-        if line.strip().startswith('<'):
-            break
-            
+        # End of table: lines starting with < (like <average>, <stddev>) EXCEPT for <global> which is part of the table
+        if line.strip().startswith('<'):  
+            parts = line.split(',')
+            if parts[0].strip() != '<global>':
+                break
+        
         # Check if line contains comma
         if ',' not in line:
             break
@@ -308,14 +312,14 @@ class InnerPSO():
         event_sel_args = self.event_sel_args
         learner_args = self.default_learner_args
         
-        cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv3_job_base.sh', f'./runtime_scripts/learner_job_{parent_particle_idx}.sh']
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv4_job_base.sh', f'./runtime_scripts/learner_job_{parent_particle_idx}.sh']
         subprocess.run(cmd)
         
         cmd = ["sbatch", "--parsable", f"./runtime_scripts/learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + learner_args + event_sel_args 
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
         
         job_id = proc.stdout.strip()
-        print(f"Submitting inner job {job_id} with args: {event_sel_args}")
+        print(f"InnerJob {job_id} args: {event_sel_args}")
         
         while True:
             if utils.is_job_completed_sacct(job_id):     
@@ -324,16 +328,16 @@ class InnerPSO():
                 
                 if len(resutls) == 1:
                     avg, n = resutls[0]
-                    print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Train: Rows: {n}, avg: {-avg}")
+                    print(f"Job {job_id}, Parent prt {parent_particle_idx} -- Train: Rows: {n}, avg: {-avg}")
                 else:
                     train_avg, train_n = resutls[0]  # use the first table (train data)
                     avg, n = resutls[1]  # use the second table (test data)
-                    print(f"Job ID {job_id}, Parent particle {parent_particle_idx} --- Train: Rows: {train_n}, avg: {-train_avg} --- Test: Rows: {n}, avg: {-avg}")
+                    print(f"Job {job_id}, Parent prt {parent_particle_idx} -- Train: Rows {train_n}, avg {-train_avg} -- Test: Rows {n}, avg {-avg}")
                     
                 result = -avg # Minimize negative score (== maximize score)
                 break
                 
-            time.sleep(5)
+            time.sleep(2)
              
         self.gbest_x = InnerLoopDecisionVar(BinaryDecisionVar.from_array(np.array([1]*self.n_dim_event_sel), mapping=self.event_sel_mapping),
                                             learner_decision_var=self.default_learner_decision_var)  # all variables used
@@ -354,16 +358,17 @@ class InnerPSO():
             event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] + [self.event_sel_args[-1]]
             learner_args = [str(arg) for _, arg in enumerate(x.learner_decision_var.to_array(dtype=object))]
             
-            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv3_job_base.sh', f'./runtime_scripts/learner_job_{parent_particle_idx}.sh']
+            cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv4_job_base.sh', f'./runtime_scripts/learner_job_{parent_particle_idx}.sh']
             subprocess.run(cmd)
             
             cmd = ["sbatch", "--parsable", f"./runtime_scripts/learner_job_{parent_particle_idx}.sh", str(event_trace_filename)] + learner_args + event_sel_args 
+            time.sleep(np.random.randint(2) + 1)
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
-           
+            
             # stdout = proc.stdout.readline()
             # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_id = proc.stdout.strip()
-            print(f"Submitting inner job {job_id} with args: {event_sel_args} and {learner_args}")
+            print(f"InnerJob {job_id} args: {event_sel_args} and {learner_args}")
             job_ids.append(int(job_id))
             
         # Check for finished jobs by checking their output files
@@ -377,16 +382,16 @@ class InnerPSO():
                     
                     if len(resutls) == 1:
                         avg, n = resutls[0]
-                        print(f"Job ID {job_ids[idx]}, Parent particle {idx} --- Train: Rows: {n}, avg: {-avg}")
+                        print(f"Job {job_ids[idx]}, Prtc {idx} -- Train: Rows {n}, avg {-avg}")
                     else:
                         train_avg, train_n = resutls[0]  # use the first table (train data)
                         avg, n = resutls[1]  # use the second table (test data)
-                        print(f"JobID {job_ids[idx]}, Particle {idx} --- Train: Rows: {train_n}, avg: {-train_avg} --- Test: Rows: {n}, avg: {-avg}")
+                        print(f"Job {job_ids[idx]}, Prtc {idx} -- Train: Rows {train_n}, avg {-train_avg} -- Test: Rows {n}, avg {-avg}")
                         
                     pending.remove(idx)
                     results[idx] = -avg # Minimize negative score (== maximize score)
                 
-            time.sleep(5)
+            time.sleep(2)
             
         self.Y = np.array(results)  
         return self.Y
@@ -457,7 +462,7 @@ class InnerPSO():
     
     def optimize_distributed(self, save_dir, event_trace_filename, parent_particle_idx, gbest_x_init=None):
         self.reset_iter_params(gbest_x_init)
-        print(f"InnerPSO: max_iter: {self.max_iter}, pop: {self.pop}")
+        # print(f"InnerPSO: max_iter: {self.max_iter}, pop: {self.pop}")
         
         for iter_num in range(self.max_iter):
             print(f"InnerPSO iteration: {iter_num}")
