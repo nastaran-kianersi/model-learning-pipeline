@@ -91,7 +91,8 @@ def is_job_completed_sacct(job_id):
             return False  # No exact match found yet in sacct output
 
         # Common end states for finished jobs
-        completed_states = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"}
+        completed_states = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "BOOT_FAIL",
+                            "OUT_OF_MEMORY", "DEADLINE"}
 
         # if main_job_state in completed_states:
         #     print(f"Job {job_id} state from sacct: {main_job_state}")

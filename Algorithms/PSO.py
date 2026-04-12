@@ -417,10 +417,10 @@ class PSO():
                     # All jobs in the particle are done, now call the inner loop
                     # Call an sbatch script to prepare the input to the learner (i.e., inner loop)
                     # Then call the inner loop 
-                    leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
-                    cmd = ["sbatch", "--quiet", "./runtime_scripts/prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    learner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
+                    cmd = ["sbatch", "--quiet", "./runtime_scripts/prepare_learner_input.sh", learner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
-                    leaner_input_filename = leaner_input_foldername + ".json.zst"
+                    leaner_input_filename = learner_input_foldername + ".json.zst"
                     
                     if self.skip_inner_loop:
                         args = (
@@ -464,7 +464,7 @@ class PSO():
 
         while pending_particles:
             for idx in pending_particles:
-                if not inner_loop_processes[idx].is_alive():
+                if not inner_loop_processes[idx].is_alive() or inner_loop_processes[idx].exitcode is not None: #crazily, is_alive() could return True even when the process is already finished, so we also check exitcode
                     print("\n----- InnerPSO for particle", idx, "has finished. Logs:")
                     try:
                         print(return_dict[idx]['stdout'], end="")
