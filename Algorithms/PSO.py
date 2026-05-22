@@ -214,7 +214,7 @@ class PSO():
 
     """
     def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
-                 w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, 
+                 w=0.8, c1=1.49, c2=1.49, auto_coeffs=True, skip_inner_loop=False, 
                  skip_event_sel_opt=False, skip_learner_opt=False, 
                  early_termination=False, verbose=False):
         
@@ -308,9 +308,9 @@ class PSO():
         if self.auto_coeffs:
             t = self.iter_num
             n = self.max_iter
-            self.w = (0.4/n**2) * (t - n) ** 2 + 0.4
-            self.cp = -3 * t / n + 3.5
-            self.cg =  3 * t / n + 0.5
+            self.w = (0.5/n**2) * (t - n) ** 2 + 0.4
+            self.cp = -2 * t / n + 2.5
+            self.cg =  2 * t / n + 0.5
             
     def run_one_time_job(self):
         job_out_file_dir = str(os.path.join(self.save_dir, ''))
@@ -595,7 +595,7 @@ class PSO():
             traceback.print_exc()
             print(f"Error in convergence analyzer: {e}")
         
-    def has_converged_gbest(self, patience=10, rel_tol=1e-4):
+    def has_converged_gbest(self, patience=15, rel_tol=1e-4):
         """
         Check convergence based on stability of global best fitness.
         Args:

@@ -163,7 +163,7 @@ class InnerPSO():
         
         self.lb, self.ub = LearnerDecisionVar.lb, LearnerDecisionVar.ub
         assert self.n_dim_learner == len(self.lb) == len(self.ub), 'dim == len(lb) == len(ub) is not True'
-        assert np.all(self.ub > self.lb), 'upper-bound must be greater than lower-bound'
+        assert np.all(self.ub >= self.lb), 'upper-bound must be greater than or equal to lower-bound'
         self.v_high = self.ub - self.lb
         self.V_learner = np.random.uniform(low=-self.v_high, high=self.v_high, size=(self.pop, self.n_dim_learner))
         self.prev_out_of_bound_learner = [np.array([False] * self.n_dim_learner) for _ in range(self.pop)]  # for handling boundary conditions in learner decision variables
@@ -298,9 +298,9 @@ class InnerPSO():
         if self.auto_coeffs:
             t = self.iter_num
             n = self.max_iter
-            self.w = (0.4/n**2) * (t - n) ** 2 + 0.4
-            self.cp = -3 * t / n + 3.5
-            self.cg =  3 * t / n + 0.5
+            self.w = (0.5/n**2) * (t - n) ** 2 + 0.4
+            self.cp = -2 * t / n + 2.5
+            self.cg =  2 * t / n + 0.5
             
     # Call a single job for a parent particle and get the result
     # Used when we wanna bypass the inner loop and use all variables in the event selection step
@@ -475,7 +475,7 @@ class InnerPSO():
     
     def analyze_convergence(self):
         try:
-            gbest_converged = self.has_converged_gbest(patience=min(5, self.max_iter//4))
+            gbest_converged = self.has_converged_gbest(patience=min(5, self.max_iter//3))
             return gbest_converged
         
         except Exception as e:
