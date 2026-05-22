@@ -1,6 +1,6 @@
 #SBATCH -c 2
 #SBATCH --mem=8G
-#SBATCH -t 0-00:10:00
+#SBATCH -t 0-00:20:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 ##SBATCH --error=/dev/null
@@ -73,9 +73,9 @@ else
     echo "Starting select-and-merge for train..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
-    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--key-event-with-prefix="$last_arg" # -s "$last_arg"
+    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--interval="2m 30s" # -s "$last_arg"
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--key-event-with-prefix="$last_arg" # -s "$last_arg"
+    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--interval="2m 30s" #--key-event-with-prefix="$last_arg" # -s "$last_arg"
     echo "Starting learn..."
     if [ "$tail_length" -eq 0 ]; then
         tail_length_opt=""

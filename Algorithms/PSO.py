@@ -28,6 +28,7 @@ import random
 
 def parse_property_file(filepath):
     """Parse the property type mapping file.
+    Return a sorted list of strings arranged in lexicographical (dictionary) order
 
     Each line: <comma-separated props>, <type>
     Example:
@@ -275,7 +276,7 @@ class PSO():
 
         self.lb, self.ub = self.X[0].lb, self.X[0].ub
         assert self.n_dim == len(self.lb) == len(self.ub), 'dim == len(lb) == len(ub) is not True'
-        assert np.all(self.ub > self.lb), 'upper-bound must be greater than lower-bound'
+        assert np.all(self.ub >= self.lb), 'upper-bound must be greater than or equal to lower-bound'
 
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
@@ -374,10 +375,19 @@ class PSO():
             
             for ith_var, decisoin_var in enumerate(decision_vars):
                 decisoin_var.rbf_gamma = float(decisoin_var.rbf_gamma) if decisoin_var.kernel == KernelType.RBF else 0.0
-                ## e.g. ['min_size=100', 'penalty=500', 'kernel=linear', 'rbf_gamma=0']
+                ## example of manual args: ['min_size=100', 'penalty=500', 'kernel=linear', 'rbf_gamma=0']
                 args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
-                        for key, value in vars(decisoin_var).items()]
+                      for key, value in vars(decisoin_var).items()]
                 
+                #### examples of hard-coded values for the conveyor belt data
+                # current_prop = self.continuous_props[ith_var].lower()
+                # if current_prop == "count":
+                #     args = ['min_size=30', 'penalty=50', 'kernel=rbf', 'rbf_gamma=0.01']
+                # elif current_prop == "power":
+                #     args = ['min_size=5', 'penalty=10', 'kernel=rbf', 'rbf_gamma=10']
+                # elif current_prop == "velocity":
+                #     args = ['min_size=5', 'penalty=10', 'kernel=rbf', 'rbf_gamma=30']
+                    
                 cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './runtime_scripts/discretization_job.sh']
                 subprocess.run(cmd)
                 

@@ -49,7 +49,7 @@ print(f"Output directory: {output_dir}\n\n")
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, configs_dir=configs_dir, output_dir=output_dir,
-          pop=32, max_iter=30, auto_coeffs=True, skip_inner_loop=False, 
+          pop=32, max_iter=40, auto_coeffs=True, skip_inner_loop=False,
           skip_event_sel_opt=False, skip_learner_opt=False, early_termination=True) #pop=128, max_iter=100   # pop=30, max_iter=30
 best_x, best_y = pso.optimize_distributed()
 pso.analyze_convergence()
@@ -63,5 +63,5 @@ print("Chosen events:")
 print(pso.gbest_x_inner[0]) 
 
 # pso.visualize()
-pso.run_for_xbest()
+pso.run_for_xbest() # YOU REALLY WANT TO RUN THIS
 

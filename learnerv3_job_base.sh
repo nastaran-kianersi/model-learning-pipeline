@@ -94,6 +94,7 @@ echo "Rendering automaton..."
 # echo "Revision score: $revision_score"
 # $exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot"
 # cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
-WAIT_TIME=$(($RANDOM % 5 + 1))
+
+WAIT_TIME=$(($RANDOM % 3 + 1))
 sleep $WAIT_TIME
 echo "Learner job ended at: $(date)"

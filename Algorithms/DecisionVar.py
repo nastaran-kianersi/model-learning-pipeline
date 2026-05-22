@@ -240,7 +240,7 @@ class InnerLoopDecisionVar:
 
 class KernelType(Enum):
     LINEAR = 0
-    RBF = 1
+    RBF = 1       # comment out the other two and change RBF to 0
     COSINE = 2
 
     # Makes sense for only two operands; can't be used to sum up more than
@@ -285,8 +285,10 @@ Methods/vars to be implemented:
 """
 class DecisionVar:
     n_dim = 4
-    lb = np.array([100, 10.0, 0, 0.05])
-    ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
+    # lb = np.array([100, 10.0, 0, 0.05])
+    # ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
+    lb = np.array([5, 5.0, 0, 0.0001])
+    ub = np.array([5000, 1000.0, len(KernelType) - 1, 100.0])
         
     # in update_X and update_V, handle rbf_gamma when kernel is not rbf,
     # in here, handle discrete arithmetic

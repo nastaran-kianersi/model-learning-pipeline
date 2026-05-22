@@ -130,6 +130,7 @@ rm -rf "$TestEventTracePath"
 # Automata Learning
 module load java/21.0.1
 exec_path=/global/home/hpc5649/hpm_automata_learning/heat-pump-mining-v4/build/distributions/heat-pump-mining-0.0.0-93-de0c128-SNAPSHOT/bin/heat-pump-mining
+# exec_path=/global/home/hpc5649/hpm_automata_learning/heat-pump-mining-v3/build/distributions/heat-pump-mining-0.0.0-68-06d845e-SNAPSHOT/bin/heat-pump-mining
 
 if [ "$train_exists" = true ]; then
     echo "Starting convert-format for train..."

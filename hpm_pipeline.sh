@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mem=2G
 ##SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=33
 ##SBATCH --exclusive
 #SBATCH -t 0-23:00:00
 #SBATCH --output=job_%A.out
@@ -19,16 +19,19 @@ export PYTHONUNBUFFERED=TRUE
 if [ -n "$1" ]; then
     infile_raw_path="$1"
 else
-    # infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
-    infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test/"
+    infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
+    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/conveyor_belt_output.csv"
+    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test/"
+    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test.csv"
+    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_nominal_and_experimental/"
     # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buckboost_close_vrefs_2/buckboost_close_vrefs_2.csv"   #"./c0l13r8vref18nominal2_10repeats.csv"
 fi
 
 if [ -n "$2" ]; then
     configs_dir_raw_path="$2"
 else
-    # configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
-    configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_3"
+    configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
+    # configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_3"
 fi
 
 # convert to absolute path
