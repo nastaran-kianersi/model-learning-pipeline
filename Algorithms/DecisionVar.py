@@ -19,7 +19,7 @@ class BinaryDecisionVar:
     @classmethod
     def from_array(cls, arr, mapping=None):
         instance = cls(len(arr), mapping=mapping)
-        instance.arr = np.array(arr, copy=True)
+        instance.arr = np.array(arr, copy=True)   # might be invalid! but we don't care
         instance.mapping = mapping
         return instance
     
@@ -239,9 +239,9 @@ class InnerLoopDecisionVar:
 ######   ######   ######   ######  ######   ######   ######
 
 class KernelType(Enum):
-    LINEAR = 0
-    RBF = 1       # comment out the other two and change RBF to 0
-    COSINE = 2
+    # LINEAR = 0
+    RBF = 0       # comment out the other two and change RBF to 0
+    # COSINE = 2
 
     # Makes sense for only two operands; can't be used to sum up more than
     # two KernelType instances because it does not have the commutative property 
@@ -297,7 +297,8 @@ class DecisionVar:
         min_size = np.random.randint(DecisionVar.lb[0], DecisionVar.ub[0])
         penalty = np.random.uniform(DecisionVar.lb[1], DecisionVar.ub[1])
         kernel = np.random.choice(list(KernelType))
-        rbf_gamma = np.random.uniform(DecisionVar.lb[3], DecisionVar.ub[3])
+        ## Using a log-uniform distribution for rbf_gamma to cover different orders of magnitude more effectively
+        rbf_gamma = np.exp(np.random.uniform(np.log(DecisionVar.lb[3]), np.log(DecisionVar.ub[3])))
         return DecisionVar(min_size, penalty, kernel, rbf_gamma)
     
     def __init__(
@@ -311,7 +312,7 @@ class DecisionVar:
         self.penalty = penalty
         self.kernel = kernel
         self.rbf_gamma = rbf_gamma
-        self.clip()  # Ensure values are within bounds
+        # self.clip()               # might be invalid! but we don't care
         
     @classmethod
     def from_array(cls, arr):
@@ -389,6 +390,47 @@ class DecisionVar:
         self.kernel = KernelType(int(np.clip(self.kernel.value, DecisionVar.lb[2], DecisionVar.ub[2])))
         self.rbf_gamma = np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
     
+    def find_out_of_bound_dims(self):
+        # Return an array of 0/1 flags indicating which fields are out of bound
+        orig_vals = self.to_array(dtype=object)
+        clipped_vals = np.array([
+            np.clip(self.min_size, DecisionVar.lb[0], DecisionVar.ub[0]),
+            np.clip(self.penalty, DecisionVar.lb[1], DecisionVar.ub[1]),
+            np.clip(self.kernel.value, DecisionVar.lb[2], DecisionVar.ub[2]),
+            np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
+        ], dtype=object)
+
+        # 1 if original value differed from clipped value (i.e., out of bound), else 0
+        out_of_bound = (orig_vals != clipped_vals).astype(bool)
+        return out_of_bound
+
+    def handle_boundary_pBest_dim(self, pbest_arr):
+        # Get boolean mask of out-of-bound dimensions
+        out_of_bound = self.find_out_of_bound_dims()
+
+        # Convert pbest_arr to a numeric array if needed
+        if isinstance(pbest_arr, DecisionVar):
+            pbest_vals = pbest_arr.to_array(dtype=object)
+        else:
+            pbest_vals = np.asarray(pbest_arr, dtype=object)
+
+        if pbest_vals.size != DecisionVar.n_dim:
+            raise ValueError(f"pbest_arr must have {DecisionVar.n_dim} elements")
+            
+        # Use vectorized replace via to_array/from_array
+        self_vals = self.to_array()
+        self_vals[out_of_bound] = pbest_vals[out_of_bound]
+
+        new = DecisionVar.from_array(self_vals)
+    
+        # Assign all fields from the reconstructed instance
+        # print("before applying pbest handling: ", self)
+        self.min_size = new.min_size
+        self.penalty = new.penalty
+        self.kernel = new.kernel
+        self.rbf_gamma = new.rbf_gamma
+        # print("after applying pbest handling: ", self)
+        return out_of_bound
 
 # Wrapper around multiple DecisionVar instances
 class CompositeDecisionVar:
@@ -479,7 +521,14 @@ class CompositeDecisionVar:
         for var in self.decision_vars:
             var.clip()
     
-    
+    def handle_boundary_pBest_dim(self, pbest_learner_arr):
+        out_of_bound_flags = []
+        for idx, var in enumerate(self.decision_vars):
+            out_of_bound_flags.append(var.handle_boundary_pBest_dim(pbest_learner_arr[idx * self.n_dim_per_var:(idx + 1) * self.n_dim_per_var]))
+            self.decision_vars[idx] = var
+
+        return np.concatenate([np.asarray(flags, dtype=bool).ravel() for flags in out_of_bound_flags]).astype(bool)
+
 # =========================
 # Helper functions
 # =========================

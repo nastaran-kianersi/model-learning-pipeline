@@ -3,8 +3,6 @@
 # @Time    : 2019/8/20
 # @Author  : github.com/guofei9987 - Modified by Nastaran Kianersi
 
-import random
-
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
@@ -120,7 +118,7 @@ class InnerPSO():
     This algorithm was adapted from the earlier works of J. Kennedy and
     R.C. Eberhart in Particle Swarm Optimization [IJCNN1995]_.
     """
-    def __init__(self, event_sel_args, key_prop, pop, max_iter,
+    def __init__(self, event_sel_args, key_prop, pop, max_iter, use_key_event=True,
                  w=0.8, c1=1.49, c2=1.49, auto_coeffs=True, skip_event_sel_opt=False,
                  skip_learner_opt=False, early_termination=False, verbose=False):
 
@@ -129,7 +127,14 @@ class InnerPSO():
         self.key_prop = key_prop
         index = self.event_sel_args.index(self.key_prop)      # move the key property to the end of the list
         self.event_sel_args.append(self.event_sel_args.pop(index))
-        self.event_sel_mapping = self.event_sel_args[:-1] #self.event_sel_args[:-1]  # the mapping for the binary decision variable in the event selection step (exclude the key property)
+        
+        self.use_key_event = use_key_event
+        if use_key_event:
+            self.event_sel_mapping = self.event_sel_args[:-1]   # the mapping for the binary decision variable in the event selection step (exclude the key property)
+            self.n_dim_event_sel = len(event_sel_args) - 1      # number of variables to choose from in the event selection step (excluding the key property)
+        else:
+            self.event_sel_mapping = self.event_sel_args
+            self.n_dim_event_sel = len(event_sel_args)
         
         self.skip_event_sel_opt = skip_event_sel_opt
         self.skip_learner_opt = skip_learner_opt
@@ -137,7 +142,6 @@ class InnerPSO():
         self.default_learner_args = [str(arg) for _, arg in enumerate(self.default_learner_decision_var.to_array(dtype=object))]
         
         self.pop = pop                                      # number of particles
-        self.n_dim_event_sel = len(event_sel_args) - 1      # number of variables to choose from in the event selection step (excluding the key property)
         self.n_dim_learner   = LearnerDecisionVar.n_dim     # number of variables to optimize in the learner step
         self.X = np.array([InnerLoopDecisionVar.random(self.n_dim_event_sel, self.event_sel_mapping) for _ in range(pop)])
         if skip_event_sel_opt:
@@ -353,8 +357,11 @@ class InnerPSO():
         results = [0] * self.pop
         
         for idx, x in enumerate(self.X):
-            event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] + [self.event_sel_args[-1]] if not self.skip_event_sel_opt else self.event_sel_args
-            # event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] if not self.skip_event_sel_opt else self.event_sel_args  #+ [self.event_sel_args[-1]]
+            if self.use_key_event:
+                event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] + [self.event_sel_args[-1]] if not self.skip_event_sel_opt else self.event_sel_args  
+            else:
+                event_sel_args = [self.event_sel_args[i] for i, val in enumerate(x.bin_decision_var.arr) if val == 1] if not self.skip_event_sel_opt else self.event_sel_args 
+                
             learner_args = [str(arg) for _, arg in enumerate(x.learner_decision_var.to_array(dtype=object))] if not self.skip_learner_opt else self.default_learner_args
             
             cmd = ["bash", "./submit.sh",  job_out_file_dir, './learnerv4_job_base.sh', f'./runtime_scripts/learner_job_{parent_particle_idx}.sh']

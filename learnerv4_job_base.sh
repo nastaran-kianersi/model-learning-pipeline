@@ -1,10 +1,13 @@
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 #SBATCH -c 2
-#SBATCH --mem=8G
+#SBATCH --mem=16G
 #SBATCH -t 0-00:20:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-##SBATCH --error=/dev/null
 ##SBATCH --wait
+
+source configs.env
 
 infile_arg="$1"
 shift
@@ -73,9 +76,15 @@ else
     echo "Starting select-and-merge for train..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
-    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--interval="2m 30s" # -s "$last_arg"
+    if [ "$MERGER_TYPE" = "--key-event-with-prefix" ] || [ "$MERGER_TYPE" = "--key-event" ]; then
+        merger_type_arg="$MERGER_TYPE=$last_arg"
+    else
+        merger_type_arg="$MERGER_TYPE"
+    fi
+    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" $merger_type_arg # -s "$last_arg"
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" --start-of-day-utc 08:00 #--interval="2m 30s" #--key-event-with-prefix="$last_arg" # -s "$last_arg"
+    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" $merger_type_arg # -s "$last_arg"
+    
     echo "Starting learn..."
     if [ "$tail_length" -eq 0 ]; then
         tail_length_opt=""
@@ -86,9 +95,9 @@ else
         --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" $tail_length_opt
 
     echo "Starting validate-revision-score with train data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init --single-best --parallel
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init $SCORING_TYPE
     echo "Starting validate-revision-score with test data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init --single-best --parallel
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init $SCORING_TYPE
 fi
 
 # echo "Starting compute-timing-dispersion..."

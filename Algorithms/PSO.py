@@ -18,12 +18,9 @@ import time
 import os
 import copy
 
-import csv
-import re
 from pathlib import Path
 from datetime import datetime
 import traceback
-import random
 
 
 def parse_property_file(filepath):
@@ -213,7 +210,7 @@ class PSO():
         Current iteration number.
 
     """
-    def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
+    def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter, inner_loop_configs,
                  w=0.8, c1=1.49, c2=1.49, auto_coeffs=True, skip_inner_loop=False, 
                  skip_event_sel_opt=False, skip_learner_opt=False, 
                  early_termination=False, verbose=False):
@@ -242,11 +239,13 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 15
-        inner_pso_max_iter = 10
+        inner_pso_pop      = int(inner_loop_configs["INNER_POP"])
+        inner_pso_max_iter = int(inner_loop_configs["INNER_MAX_ITER"])
+        
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
-            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, 
+            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter,
+                      inner_loop_configs["USE_KEY_EVENT"] == "true",
                       skip_event_sel_opt=skip_event_sel_opt, 
                       skip_learner_opt=skip_learner_opt, early_termination=True) for _ in range(pop)],
             dtype=object
@@ -280,6 +279,7 @@ class PSO():
 
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
+        self.prev_out_of_bound_learner = [np.array([False] * self.n_dim) for _ in range(self.pop)]  # for handling boundary conditions in learner decision variables
         self.Y = np.array([0] * pop)
         
         self.x_inner = np.array([(None, None)] * pop)        # best inner x for current outer iteration in the form of (events_chosen, learner_args_chosen) for each particle
@@ -303,6 +303,23 @@ class PSO():
         # support conditional variables: if kernel in the next iter is not rbf, rbf_gamma should not change
         self.gamma_indices = list(range(3, self.n_dim, 4))
         self.V_prev_gamma = np.copy(self.V[:, self.gamma_indices])
+        
+        ## Initialize rbf_gamma-related velocity columns in log-space so they remain positive-scaled.
+        ## It doesn't work very well but it's better than nothing
+        # print("V: ", self.V, '\n\n')
+        eps = 1e-4  # to avoid log(0)
+        v_rbf_gamma = np.exp(
+            np.random.uniform(
+                np.log(eps),
+                np.log(v_high[self.gamma_indices]),
+                size=(self.pop, len(self.gamma_indices)),
+            )
+        )
+        signs = np.random.choice([-1, 1], size=(self.pop, len(self.gamma_indices)))
+        # print(v_rbf_gamma, '\n\n')
+        self.V[:, self.gamma_indices] = signs * v_rbf_gamma  # shift back to original scale
+        # print("V after log-space init for rbf_gamma: ", self.V, '\n\n')
+        # exit(1)
 
     def update_coeffs(self):
         if self.auto_coeffs:
@@ -331,6 +348,9 @@ class PSO():
         
     # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf, and 2) discrete variable kernel
     def update_V(self):
+        for i in range(self.pop):
+            self.V[i][self.prev_out_of_bound_learner[i]] = 0
+        
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
         intrm1 = np.array([self.pbest_x[i].to_array() - self.X[i].to_array() for i in range(self.pop)])
@@ -353,7 +373,9 @@ class PSO():
                     self.V[i, self.gamma_indices[j]] = self.V_prev_gamma[i, j]
                 
         self.X = np.array([CompositeDecisionVar.from_array(X_tmp_arr[i]) for i in range(self.pop)])
-                
+        for i in range(self.pop):
+            self.prev_out_of_bound_learner[i] = self.X[i].handle_boundary_pBest_dim(self.pbest_x[i].to_array())
+               
     # Use subprocess to run the job script and get the results
     def call_scripts(self):
         """

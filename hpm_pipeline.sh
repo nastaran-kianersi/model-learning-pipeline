@@ -1,38 +1,46 @@
 #!/bin/bash
-#SBATCH --mem=2G
+#SBATCH --mem=3G
+#SBATCH -c 31
 ##SBATCH --ntasks=1
-#SBATCH --cpus-per-task=33
+##SBATCH --cpus-per-task=31
 ##SBATCH --exclusive
-#SBATCH -t 0-23:00:00
+#SBATCH -t 0-23:59:59
 #SBATCH --output=job_%A.out
 #SBATCH --error=job_%A.err
-##SBATCH --mail-user=nastaran.kianersi@queensu.ca
 ##SBATCH --mail-type=ALL
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 
+##SBATCH --account=def-hpcg2046
+##SBATCH --partition=cpularge_24hrs or frntsprt_cpu
+##SBATCH --mail-user=nastaran.kianersi@queensu.ca
+
 export PYTHONUNBUFFERED=TRUE
+
+source ~/HPM_Pipeline/hpm_pipeline/configs.env
 
 # to get the absolute path from the full path:
 #readlink -f $1 # doesn't work
 # check for input argument or use default
-if [ -n "$1" ]; then
-    infile_raw_path="$1"
-else
-    infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
-    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/conveyor_belt_output.csv"
-    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test/"
-    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_test.csv"
-    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buck_csvs_test/buck_csvs_nominal_and_experimental/"
-    # infile_raw_path="/global/home/hpc5649/LearnerInputSignals/buckboost_close_vrefs_2/buckboost_close_vrefs_2.csv"   #"./c0l13r8vref18nominal2_10repeats.csv"
-fi
+# if [ -n "$1" ]; then
+#     infile_raw_path="$1"
+# else
+#     infile_raw_path="./Heat_Pump/nfer_format_compatibility/mitsubishi_12_december2023+jan2024_method1.events"
+# fi
 
-if [ -n "$2" ]; then
-    configs_dir_raw_path="$2"
-else
-    configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
-    # configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_3"
-fi
+# if [ -n "$2" ]; then
+#     configs_dir_raw_path="$2"
+# else
+#     configs_dir_raw_path="./HPM_Pipeline/hpm_pipeline/tests/configs_2"
+# fi
+
+infile_raw_path=$EXEC_TRACE_FILE
+configs_dir_raw_path=$PROP_CONFIG
+
+copy_name="configs_${SLURM_JOB_ID}.env"
+cp ~/HPM_Pipeline/hpm_pipeline/configs.env "$copy_name"
+echo "Wrote copy of configs.env to: $copy_name"
+cp -r $configs_dir_raw_path ~/"configs_${SLURM_JOB_ID}"
 
 # convert to absolute path
 input_addr=$(cd -- "$(dirname -- "$infile_raw_path")" && pwd)/$(basename -- "$infile_raw_path")
@@ -82,6 +90,7 @@ cd HPM_Pipeline/hpm_pipeline
 chmod +x *.sh
 #module load StdEnv/2023 python/3.12.4 scipy-stack/2024a
 module load StdEnv/2023 python/3.10.13 scipy-stack/2023b
+pip install python-dotenv --user
 #module load scipy-stack/2023b matplotlib/3.7.2
 #source venv/bin/activate
 echo "The actual script started running at: $(date)"

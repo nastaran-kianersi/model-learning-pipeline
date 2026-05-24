@@ -5,4 +5,4 @@ two_way_valve, discrete
 three_way_valve, discrete
 thermo_off, discrete
 defrost, discrete
-#baud_rate, discrete
+baud_rate, discrete
