@@ -1,8 +1,8 @@
-#SBATCH --output=/dev/null
+##SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
 #SBATCH -c 1
 #SBATCH --mem=100M
-#SBATCH -t 0-00:10:00
+#SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait

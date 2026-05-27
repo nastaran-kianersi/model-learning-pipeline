@@ -286,9 +286,21 @@ class InnerPSO():
         tmp_X = np.where(r < sigmoid_V, 1, 0)
         
         # If a particle has all zeros, randomly set one element to 1 => check if there's a better way
-        for i in range(self.pop):
-            if np.all(tmp_X[i] == 0):
-                tmp_X[i][np.random.randint(self.n_dim_event_sel)] = 1
+        # for i in range(self.pop):
+        #     if np.all(tmp_X[i] == 0):
+        #         tmp_X[i][np.random.randint(self.n_dim_event_sel)] = 1
+        if self.use_key_event:
+            for i in range(self.pop):
+                if np.all(tmp_X[i] == 0):
+                    tmp_X[i][np.random.randint(self.n_dim_event_sel)] = 1
+        else:
+            for i in range(self.pop):
+                nonzero_count = np.count_nonzero(tmp_X[i])
+                if nonzero_count < 2:
+                    zero_indices = np.where(tmp_X[i] == 0)[0]
+                    needed = 2 - nonzero_count
+                    chosen = np.random.choice(zero_indices, size=needed, replace=False)
+                    tmp_X[i][chosen] = 1
                 
         for i in range(self.pop):
             self.X[i].bin_decision_var = BinaryDecisionVar.from_array(tmp_X[i], mapping=self.event_sel_mapping)
@@ -374,7 +386,7 @@ class InnerPSO():
             # stdout = proc.stdout.readline()
             # job_id = stdout.strip().split()[-1] if stdout.strip().startswith("Submitted batch job") else None
             job_id = proc.stdout.strip()
-            print(f"InnerJob {job_id} args: {event_sel_args} and {learner_args}")
+            print(f"InnerJob {job_id} args: {event_sel_args}") # and {learner_args}")
             job_ids.append(int(job_id))
             
         # Check for finished jobs by checking their output files

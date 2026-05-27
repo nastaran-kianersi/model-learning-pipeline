@@ -419,7 +419,7 @@ class PSO():
                 
                 job_id = proc.stdout.strip()
                 job_ids_per_var.append(int(job_id))
-                print("Submitting job", job_id, "with args: ", ' '.join(args))
+                print("Submit job", job_id, ", args: ", ' '.join(args))
                 
             job_ids.append(job_ids_per_var)
             processes.append(processes_per_var)
@@ -617,7 +617,7 @@ class PSO():
             traceback.print_exc()
             print(f"Error in convergence analyzer: {e}")
         
-    def has_converged_gbest(self, patience=15, rel_tol=1e-4):
+    def has_converged_gbest(self, patience=10, rel_tol=1e-4):
         """
         Check convergence based on stability of global best fitness.
         Args:

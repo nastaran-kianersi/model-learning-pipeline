@@ -1,4 +1,4 @@
-#SBATCH --output=/dev/null
+##SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
 #SBATCH -c 2
 #SBATCH --mem=16G
@@ -76,14 +76,23 @@ else
     echo "Starting select-and-merge for train..."
     last_arg="${event_sel_args[@]: -1}"
     # echo "Last arg: $last_arg, learner args: ${event_sel_args[@]}"
+
+    # Build merger_type_arg array
     if [ "$MERGER_TYPE" = "--key-event-with-prefix" ] || [ "$MERGER_TYPE" = "--key-event" ]; then
-        merger_type_arg="$MERGER_TYPE=$last_arg"
+        # flag and value are two separate arguments
+        merger_type_arg=("$MERGER_TYPE" "$last_arg")
+    elif [[ "$MERGER_TYPE" == --interval=* ]]; then
+        # keep as single argument; the space inside the value must not be split
+        merger_type_arg=("$MERGER_TYPE")
     else
-        merger_type_arg="$MERGER_TYPE"
+        # --start-of-day-utc 10:00 and --single: safe to word-split on space
+        read -ra merger_type_arg <<< "$MERGER_TYPE"
     fi
-    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" $merger_type_arg # -s "$last_arg"
+    echo "merger_type_arg: ${merger_type_arg[@]}"
+
+    $exec_path select-and-merge -i $TrainEventTracePath -o "$TMPDIR/train_filtered.json.zst" -e "${event_sel_args[@]}" "${merger_type_arg[@]}" # -s "$last_arg"
     echo "Starting select-and-merge for test..."
-    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" $merger_type_arg # -s "$last_arg"
+    $exec_path select-and-merge -i $TestEventTracePath -o "$TMPDIR/test_filtered.json.zst" -e "${event_sel_args[@]}" "${merger_type_arg[@]}"   # -s "$last_arg"
     
     echo "Starting learn..."
     if [ "$tail_length" -eq 0 ]; then
@@ -94,10 +103,14 @@ else
     $exec_path learn -i "$TMPDIR/train_filtered.json.zst" -o "$TMPDIR/nibe.dot" --init=$init --parallel -d -u \
         --timing-epsilon="$timing_eps" --timing-epsilon-decay="$timing_eps_decay" --frequency-epsilon="$freq_eps" --frequency-epsilon-decay="$freq_eps_decay" $tail_length_opt
 
+    # Build scoring_type_arg array; always safe to word-split (no embedded spaces)
+    read -ra scoring_type_arg <<< "$SCORING_TYPE"
+    echo "scoring_type_arg: ${scoring_type_arg[@]}"
+
     echo "Starting validate-revision-score with train data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init $SCORING_TYPE
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init "${scoring_type_arg[@]}"
     echo "Starting validate-revision-score with test data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init $SCORING_TYPE
+    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init "${scoring_type_arg[@]}"
 fi
 
 # echo "Starting compute-timing-dispersion..."
