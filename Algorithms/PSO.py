@@ -6,12 +6,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+import traceback
 
 from . import utils
 from .DecisionVar import *
 from .InnerPSO import *
 import subprocess
 from multiprocessing import Process, Manager, Pipe
+# from concurrent.futures import ProcessPoolExecutor
 from io import StringIO
 
 import time
@@ -320,7 +322,12 @@ class PSO():
         self.V[:, self.gamma_indices] = signs * v_rbf_gamma  # shift back to original scale
         # print("V after log-space init for rbf_gamma: ", self.V, '\n\n')
         # exit(1)
+        
+        # self.executor = ProcessPoolExecutor(max_workers=self.pop)
 
+    # def __del__(self):
+    #     self.executor.shutdown(wait=True)
+        
     def update_coeffs(self):
         if self.auto_coeffs:
             t = self.iter_num
@@ -425,7 +432,7 @@ class PSO():
             processes.append(processes_per_var)
             time.sleep(np.random.randint(2) + 1) # add some random sleep to avoid submitting all jobs at the same time, which can be hard on Slurm
     
-        
+
         # Each particle submits multiple jobs (one per discrete variable)
         # Check if all jobs for a particle are finished
         # Then, call the inner loop to collect results for that particle
@@ -463,6 +470,7 @@ class PSO():
                             leaner_input_filename,
                             idx
                         )
+                        # p = self.executor.submit(one_iter_wrapper, *args)
                         p = Process(target=one_iter_wrapper, args=args)
                     else:
                         args = (
@@ -474,6 +482,7 @@ class PSO():
                             idx,
                             self.inner_loop_gbest_x_init[idx]
                         )
+                        # p = self.executor.submit(inner_loop_wrapper, *args)
                         p = Process(target=inner_loop_wrapper, args=args)
                     
                     p.start()
@@ -497,6 +506,14 @@ class PSO():
         while pending_particles:
             for idx in pending_particles:
                 if not inner_loop_processes[idx].is_alive() or inner_loop_processes[idx].exitcode is not None: #crazily, is_alive() could return True even when the process is already finished, so we also check exitcode
+                # if not inner_loop_processes[idx].done():
+                    # exc = inner_loop_processes[idx].exception()
+                    # if exc is not None:
+                    #     print(f"Worker process for particle {idx} raised an exception: {exc}")
+                    #     traceback.print_exception(type(exc), exc, exc.__traceback__)
+                    #     pending_particles.remove(idx)
+                    #     continue
+                    
                     print("\n----- InnerPSO for particle", idx, "has finished. Logs:")
                     try:
                         print(return_dict[idx]['stdout'], end="")
