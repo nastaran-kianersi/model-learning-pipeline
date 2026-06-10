@@ -1,19 +1,20 @@
 #!/bin/bash
 #SBATCH --mem=3G
-#SBATCH -c 31
-##SBATCH --ntasks=1
-##SBATCH --cpus-per-task=31
-##SBATCH --exclusive
+#SBATCH -c 15
 #SBATCH -t 0-23:59:59
 #SBATCH --output=job_%A.out
 #SBATCH --error=job_%A.err
 ##SBATCH --mail-type=ALL
-#SBATCH --qos=privileged
-#SBATCH --partition=reserved
-
-##SBATCH --account=def-hpcg2046
-##SBATCH --partition=cpularge_24hrs or frntsprt_cpu
 ##SBATCH --mail-user=nastaran.kianersi@queensu.ca
+
+#SBATCH --qos=privileged
+#SBATCH --partition=skm
+#SBATCH --account=def-hpcg2046
+# partitions: cpularge_24hrs or frntsprt_cpu or skm => our group only has access to skm
+
+##SBATCH --ntasks=1
+##SBATCH --cpus-per-task=31
+##SBATCH --exclusive
 
 export PYTHONUNBUFFERED=TRUE
 

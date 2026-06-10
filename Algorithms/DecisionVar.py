@@ -239,9 +239,9 @@ class InnerLoopDecisionVar:
 ######   ######   ######   ######  ######   ######   ######
 
 class KernelType(Enum):
-    # LINEAR = 0
-    RBF = 0       # comment out the other two and change RBF to 0
-    # COSINE = 2
+    LINEAR = 0
+    RBF = 1       # comment out the other two and change RBF to 0
+    COSINE = 2
 
     # Makes sense for only two operands; can't be used to sum up more than
     # two KernelType instances because it does not have the commutative property 

@@ -2,7 +2,7 @@
 #SBATCH --error=/dev/null
 #SBATCH -c 2
 #SBATCH --mem=16G
-#SBATCH -t 0-00:20:00
+#SBATCH -t 0-00:14:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 ##SBATCH --wait
@@ -110,7 +110,8 @@ else
     echo "Starting validate-revision-score with train data..."
     $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/train_filtered.json.zst" --init=$init "${scoring_type_arg[@]}"
     echo "Starting validate-revision-score with test data..."
-    $exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init "${scoring_type_arg[@]}"
+    test_score_output=$($exec_path compute-revision-score -a "$TMPDIR/nibe.dot" -i "$TMPDIR/test_filtered.json.zst" --init=$init "${scoring_type_arg[@]}")
+    echo "$test_score_output"
 fi
 
 # echo "Starting compute-timing-dispersion..."
@@ -118,11 +119,13 @@ fi
 # echo "Starting compute-states-per-output..."
 # $exec_path compute-states-per-output -a "$TMPDIR/nibe.dot"
 
-echo "Rendering automaton..."
-# revision_score=$(grep -oP 'revision_score["\s:=]+\K[0-9.]+' <<< "$(history 1)" | tail -1)
-# echo "Revision score: $revision_score"
-# $exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot" --render-min=0.01
-# cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
+test_avg=$(grep -m1 '^<average>' <<< "$test_score_output" | cut -d',' -f2)
+echo "Test average revision score: $test_avg"
+if (( $(echo "$test_avg > 0.5" | bc -l) )); then
+    echo "Rendering automaton..."
+    $exec_path render-automaton -i "$TMPDIR/nibe.dot" -o "$TMPDIR/neat.dot" --render-min=0.01
+    cp -r "$TMPDIR/neat.dot" "$SCRATCH_DIR"/"$outfile_addr"
+fi
 
 WAIT_TIME=$(($RANDOM % 3 + 1))
 sleep $WAIT_TIME

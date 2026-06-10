@@ -19,6 +19,9 @@ Can also be imported and called directly:
 import re
 import argparse
 from pathlib import Path
+from datetime import datetime
+import subprocess
+import sys
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -67,8 +70,9 @@ def _apply_paper_style() -> None:
     })
 
 
-# ── Log parser ───────────────────────────────────────────────────────────────
+# ── File Parsers ───────────────────────────────────────────────────────────────
 
+# --- Log Parser for gbest_y history ---
 def parse_gbest_y_hist(log_path: str | Path) -> list[float]:
     """
     Parse a PSO log file and return the list of global-best fitness values,
@@ -136,138 +140,110 @@ def parse_gbest_y_hist(log_path: str | Path) -> list[float]:
             "Please verify the file format."
         )
 
-    return gbest_y_hist
+    return gbest_y_hist #[:-1]
 
+# --- Log Parser for execution time ---
+def calculate_exec_time(log_path: str | Path) -> float:
+    """
+    Calculate total execution time from a PSO log file by parsing lines 
+    containing "Pipeline job started at: " (example: at: Mon May 25 06:28:30 PM EDT 2026)
+    and "Pipeline job ended at: " (example: at: Mon May 25 09:08:59 PM EDT 2026) 
+    Calculate the difference in hh:mm:ss and print it in this format
+    """
+    log_path = Path(log_path)
+    if not log_path.is_file():
+        raise FileNotFoundError(f"Log file not found: {log_path}")
+
+    start_time_str = None
+    end_time_str = None
+
+    with open(log_path, "r", errors="replace") as fh:
+        for line in fh:
+            if "Pipeline job started at:" in line:
+                start_time_str = line.split("at:")[1].strip()
+            elif "Pipeline job ended at:" in line:
+                end_time_str = line.split("at:")[1].strip()
+
+    if not start_time_str or not end_time_str:
+        print("Could not find start or end time in the log.")
+        return 0.0
+
+    time_format = "%a %b %d %I:%M:%S %p %Z %Y"
+    start_time = datetime.strptime(start_time_str, time_format)
+    end_time = datetime.strptime(end_time_str, time_format)
+
+    exec_time_seconds = (end_time - start_time).total_seconds()
+    exec_time_hms = str(end_time - start_time)
+
+    print(f"Total execution time: {exec_time_hms} (hh:mm:ss)")
+
+    return exec_time_seconds
+    
+# --- Dot file parser and cleaner for automaton visualization ---
+# def clean_dot(src: str) -> str:
+#     # 1. circle -> ellipse so long labels fit snugly
+#     src = src.replace('shape="circle"', 'shape="ellipse"')
+ 
+#     def transform_label(m: re.Match) -> str:
+#         label = m.group(1)
+#         # 2. drop "_std<number>" from event names (e.g. _std0.02)
+#         label = re.sub(r"_std[\d.]+", "", label)
+#         # 3. drop the " / tSD=..." segment entirely
+#         label = re.sub(r" / tSD=[^\"]*", "", label)
+#         # 4. drop the leading "- / " from edge labels like "- / p=0.50"
+#         label = re.sub(r"^- / ", "", label)
+#         # 5. drop the leading "c/" or "d/" prefix from event names
+#         label = re.sub(r"^[cd]/", "", label)
+#         # 6. turn remaining " / " separators into newlines for tighter ellipses
+#         label = label.replace(" / ", r"\n")
+#         return f'label="{label}"'
+ 
+#     return re.sub(r'label="([^"]*)"', transform_label, src)
+
+# --- Dot file parser and cleaner for automaton visualization ---
+def clean_dot(src: str) -> str:
+    # Each entry: (regex pattern, replacement string).
+    # Patterns are matched anywhere in the label unless anchored with ^ or $.
+    # Replacements may contain HTML tags like <sub>1</sub> or <sup>2</sup>;
+    # the script will switch that node to an HTML-like label automatically.
+    RENAMES = [
+        (r"PLANT_INFO_CurrentIL", r"I<sub>L</sub>"),
+        (r"PLANT_INFO_CurrentVC", r"V<sub>C</sub>"),
+        (r"CTRL_INFO_ModeSetting", r"Ctrl-Mode"),
+    ]
+
+    HTML_TAG_RE = re.compile(r"<(sub|sup|b|i|u|font|br)\b", re.IGNORECASE)
+    
+    # 1. circle -> ellipse so long labels fit snugly
+    src = src.replace('shape="circle"', 'shape="ellipse"')
+ 
+    def transform_label(m: re.Match) -> str:
+        label = m.group(1)
+        # 2. drop "_std<number>" from event names (e.g. _std0.02)
+        label = re.sub(r"_std[\d.]+", "", label)
+        # 3. drop the " / tSD=..." segment entirely
+        label = re.sub(r" / tSD=[^\"]*", "", label)
+        # 4. drop the leading "- / " from edge labels like "- / p=0.50"
+        label = re.sub(r"^- / ", " ", label)
+        # 5. drop the leading "c/" or "d/" prefix
+        label = re.sub(r"^[cd]/", "", label)
+        # 6. apply user-defined renames
+        for pattern, repl in RENAMES:
+            label = re.sub(pattern, repl, label)
+ 
+        # 7. emit the label in the right syntax
+        if HTML_TAG_RE.search(label):
+            # HTML-like label: <...> wrapper, <br/> as newline
+            label = label.replace(" / ", "<br/>")
+            return f"label=<{label}>"
+        else:
+            # ordinary quoted label: \n as newline
+            label = label.replace(" / ", r"\n")
+            return f'label="{label}"'
+ 
+    return re.sub(r'label="([^"]*)"', transform_label, src)
 
 # ── Plotter ──────────────────────────────────────────────────────────────────
-
-def plot_gbest_y_hist(
-    log_path: str | Path,
-    output_path: str | Path | None = None,
-    title: str | None = None,
-    show: bool = False,
-    negate: bool = False,
-) -> Path:
-    """
-    Parse *log_path* and save a publication-quality PSO convergence figure.
-
-    Parameters
-    ----------
-    log_path : str or Path
-        Path to the PSO log file.
-    output_path : str or Path, optional
-        Destination for the saved figure.  Defaults to the same directory as
-        the log file, with the stem ``<log_stem>_convergence.pdf``.
-        Supported extensions: .pdf, .png, .svg, .eps.
-    title : str, optional
-        Custom figure title.  Defaults to "PSO Convergence".
-    show : bool
-        If True, call ``plt.show()`` after saving.
-    negate : bool
-        If True, negate every value before plotting (useful when the stored
-        fitness is the negation of a maximization objective).
-
-    Returns
-    -------
-    Path
-        Absolute path of the saved figure.
-    """
-    log_path = Path(log_path).resolve()
-
-    # ── Parse ────────────────────────────────────────────────────────────────
-    gbest_y_hist = parse_gbest_y_hist(log_path)
-    n_iters = len(gbest_y_hist)
-
-    if negate:
-        gbest_y_hist = [-v for v in gbest_y_hist]
-
-    # ── Resolve output path ───────────────────────────────────────────────────
-    if output_path is None:
-        output_path = log_path.parent / f"{log_path.stem}_convergence.pdf"
-    output_path = Path(output_path).resolve()
-
-    # ── Style ─────────────────────────────────────────────────────────────────
-    _apply_paper_style()
-
-    # ── Figure ────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(5.5, 3.8))   # single-column width ~3.5in; double ~7.0in
-
-    iters = list(range(1, n_iters + 1))
-
-    # Shaded region from initial value down to final
-    # ax.fill_between(
-    #     iters, gbest_y_hist,
-    #     y2=max(gbest_y_hist),
-    #     alpha=0.12,
-    #     color="#1a4e8c",
-    #     linewidth=0,
-    # )
-
-    # Main convergence line
-    ax.plot(
-        iters, gbest_y_hist,
-        color="#1a4e8c",
-        linewidth=1.8,
-        marker="o",
-        markersize=4.5,
-        markerfacecolor="white",
-        markeredgewidth=1.4,
-        markeredgecolor="#1a4e8c",
-        zorder=3,
-        label="Global best fitness",
-    )
-
-    # Annotate the final (best) value
-    best_val = gbest_y_hist[-1]
-    ax.annotate(
-        f"{best_val:.2g}",
-        xy=(iters[-1], best_val),
-        xytext=(8, 8),
-        textcoords="offset points",
-        fontsize=9,
-        color="#1a4e8c",
-        arrowprops=dict(arrowstyle="-", color="#1a4e8c", lw=0.8),
-    )
-
-    # ── Axes labels & title ──────────────────────────────────────────────────
-    ax.set_xlabel("Iteration", labelpad=6)
-    ax.set_ylabel("Global Best Fitness", labelpad=6)
-    ax.set_title(
-        title if title else "PSO Convergence",
-        pad=10,
-        fontweight="bold",
-    )
-
-    # Integer x-ticks aligned to actual iterations
-    # ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True, nbins=min(n_iters, 10)))
-    # ax.xaxis.set_major_locator(ticker.MultipleLocator(2)) 
-    # show every 2 iterations starting from 1
-    # setting the xticks labels manually using a list from 1 to n_iters with a step of 2
-    ax.set_xticks(list(range(1, n_iters + 1, 2)))
-    # ax.set_xlim(left=-0.3, right=n_iters - 0.7)
-    ax.set_xlim(left=0.8, right=n_iters + 0.3)
-
-    # setting the x axis ticks to be divided into 2 equal parts between the major ticks
-    ax.xaxis.set_minor_locator(ticker.MultipleLocator(1))
-    # Optional: y-axis scientific notation when values are very small/large
-    # ax.yaxis.set_major_formatter(ticker.ScalarFormatter(useMathText=True))
-    ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-    # ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4))
-
-    fig.tight_layout()
-
-    # ── Save ─────────────────────────────────────────────────────────────────
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fmt = "eps" if str(output_path).endswith(".eps") else None
-    fig.savefig(output_path, format=fmt)
-    print(f"[plot_gbest_y_hist] Figure saved → {output_path}")
-
-    if show:
-        plt.show()
-
-    plt.close(fig)
-    return output_path
-
 
 """
 Enhanced PSO Convergence Plotting
@@ -311,9 +287,11 @@ def plot_gbest_y_hist_enhanced(
         gbest_y_hist = [-v for v in gbest_y_hist]
  
     if output_path is None:
-        output_path = Path.cwd() / f"{log_path.stem}_convergence_enhanced.pdf"
+        # output_path = Path.cwd() / f"{log_path.stem}_convergence_enhanced.pdf"
+        output_path = log_path.parent / f"{log_path.stem}_convergence_enhanced.svg"
     output_path = Path(output_path).resolve()
- 
+    print(output_path)
+    
     _apply_paper_style()
  
     # ── FIGURE ────────────────────────────────────────────────────────────────
@@ -356,7 +334,7 @@ def plot_gbest_y_hist_enhanced(
     ax.annotate(
         f"{initial_val:.3f}",
         xy=(iters[0], initial_val),
-        xytext=(-15, -8),
+        xytext=(0, 14),
         textcoords="offset points",
         fontsize=9.5,
         color="#0d47a1",
@@ -448,7 +426,10 @@ def plot_gbest_y_hist_enhanced(
  
     # ── SAVE ──────────────────────────────────────────────────────────────────
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fmt = "eps" if str(output_path).endswith(".eps") else None
+    # fmt = "eps" if str(output_path).endswith(".eps") else "svg"
+    fmt = output_path.suffix.lstrip(".")
+    # if not fmt:
+        # fmt = "svg"
     fig.savefig(output_path, format=fmt, dpi=300)  # high DPI for print quality
     print(f"[Enhanced] Figure saved → {output_path}")
  
@@ -460,7 +441,11 @@ def plot_gbest_y_hist_enhanced(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def _cli() -> None:
+""" Basic Usage:
+    python visualization.py path/to/job.out
+    Produces path/to/job_convergence_enhanced.svg with the convergence plot.
+"""
+def convergence_plot() -> None:
     parser = argparse.ArgumentParser(
         description="Parse a PSO log file and plot the gbest convergence curve."
     )
@@ -479,7 +464,7 @@ def _cli() -> None:
         help="Open an interactive matplotlib window after saving",
     )
     parser.add_argument(
-        "--negate", action="store_true",
+        "--negate", action="store_false",
         help="Negate fitness values before plotting (for maximization problems stored as negatives)",
     )
     args = parser.parse_args()
@@ -498,10 +483,42 @@ def _cli() -> None:
         title=args.title,
         show=args.show,
         negate=args.negate,
-        show_improvement=False,
+        show_improvement=True,
         show_shading=False,
     )
+    
+    calculate_exec_time(log_path=args.log_path)
+
+""" Basic Usage:
+    python visualization.py path/to/automaton.dot
+    Produces path/to/automaton_cleaned.dot and path/to/automaton_cleaned.svg
+"""
+def render_automaton() -> None:
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        sys.exit("Usage: python3 clean_automaton.py input.dot [output.svg]")
+ 
+    in_path = Path(sys.argv[1])
+    out_path = Path(sys.argv[2]) if len(sys.argv) == 3 else in_path.with_suffix(".svg")
+    cleaned_path = in_path.with_name(in_path.stem + "_cleaned.dot")
+ 
+    cleaned_path.write_text(clean_dot(in_path.read_text()))
+ 
+    subprocess.run(
+        [
+            "dot", str(cleaned_path), "-Tsvg",
+            "-Nfontsize=10", "-Efontsize=9",
+            "-Gsize=7.5,10", "-Gratio=compress",
+            "-Granksep=0.7", "-Gnodesep=0.8",
+            "-o", str(out_path),
+        ],
+
+        check=True,
+    )
+ 
+    print(f"Cleaned dot file: {cleaned_path}")
+    print(f"Rendered SVG:    {out_path}")
 
 
 if __name__ == "__main__":
-    _cli()
+    # convergence_plot()
+    render_automaton()
