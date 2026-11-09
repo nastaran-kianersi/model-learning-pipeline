@@ -241,7 +241,20 @@ def clean_dot(src: str) -> str:
             label = label.replace(" / ", r"\n")
             return f'label="{label}"'
  
-    return re.sub(r'label="([^"]*)"', transform_label, src)
+    # return re.sub(r'label="([^"]*)"', transform_label, src)
+    
+    src = re.sub(r'label="([^"]*)"', transform_label, src)
+ 
+    # 8. on edge lines (containing "->"), rename label= to xlabel= so
+    #    Graphviz's collision-avoiding label placer is used instead of
+    #    inline placement. Node labels stay as label=.
+    out_lines = []
+    for line in src.splitlines():
+        if "->" in line and re.search(r'\blabel\s*=', line):
+            line = re.sub(r'\blabel(\s*=)', r"xlabel\1", line, count=1)
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
 
 # ── Plotter ──────────────────────────────────────────────────────────────────
 
@@ -509,6 +522,7 @@ def render_automaton() -> None:
             "-Nfontsize=10", "-Efontsize=9",
             "-Gsize=7.5,10", "-Gratio=compress",
             "-Granksep=0.7", "-Gnodesep=0.8",
+            "-Gforcelabels=true",
             "-o", str(out_path),
         ],
 
