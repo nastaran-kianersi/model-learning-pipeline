@@ -1,14 +1,16 @@
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 #SBATCH -c 1
 #SBATCH --mem=16G
 #SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
-##SBATCH --error=/dev/null
 ##SBATCH --wait
 # use sbatch --unbuffered to get the outputs in real-time (but it will bread the Pipeline)
 
 # Disable Python output buffering to ensure real-time logging
 export PYTHONUNBUFFERED=TRUE
+source configs.env
 
 echo "Particle job started at: $(date)"
 
@@ -37,8 +39,12 @@ source ./.venv/bin/activate
 cd nfer_format_compatibility
 echo "The actual script started running at: $(date)"
 
-cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
-
+# cp $infile_addr "$TMPDIR"/$(basename "$infile_addr")
+if [ -d "$infile_addr" ]; then
+  cp -r "$infile_addr" "$TMPDIR"/
+else
+  cp "$infile_addr" "$TMPDIR"/
+fi
 propfile_name=$(basename "$propfile_addr")
 propfile_local_addr="$TMPDIR/$propfile_name"
 cp "$propfile_addr" "$propfile_local_addr"
@@ -67,7 +73,7 @@ uv run event-trace-extraction-by-CPD "$TMPDIR"/$(basename "$infile_addr") \
     --base-dir "$TMPDIR/CPD_Analysis_Outputs" \
     --data-timezone "Europe/Paris" \
     --alg-params "${uv_args[@]}"  \
-    --enable-train-test-split --train-ratio=0.7
+    --enable-train-test-split --train-ratio=$TRAIN_RATIO
 deactivate
 
 # Read the file into an array (one element per line)
@@ -96,5 +102,6 @@ fi
 
 # mkdir -p ./outputs/event_traces_$SLURM_JOB_ID # prepare the target location
 # cp -R "$OutputPath"/. ./outputs/event_traces_$SLURM_JOB_ID # copy only the contents
-
+WAIT_TIME=$(($RANDOM % 3 + 1))
+sleep $WAIT_TIME
 echo "Particle job ended at: $(date)"

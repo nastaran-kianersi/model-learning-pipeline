@@ -6,20 +6,20 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+import traceback
 
 from . import utils
 from .DecisionVar import *
 from .InnerPSO import *
 import subprocess
 from multiprocessing import Process, Manager, Pipe
+# from concurrent.futures import ProcessPoolExecutor
 from io import StringIO
 
 import time
 import os
 import copy
 
-import csv
-import re
 from pathlib import Path
 from datetime import datetime
 import traceback
@@ -27,6 +27,7 @@ import traceback
 
 def parse_property_file(filepath):
     """Parse the property type mapping file.
+    Return a sorted list of strings arranged in lexicographical (dictionary) order
 
     Each line: <comma-separated props>, <type>
     Example:
@@ -59,7 +60,10 @@ def parse_property_file(filepath):
 
     return sorted(list(continuous)), sorted(list(discrete))
 
-
+##### 
+# Bypassing stdout_capture (commenting out old_std<sth> and sys.<sth> = old_std<sth>)
+# makes the child processes print directly to the console, which is useful for 
+# debugging but can be very messy.
 def inner_loop_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
@@ -82,7 +86,7 @@ def inner_loop_wrapper(procnum, inner_pso_obj, return_dict, *args):
     sys.stderr = old_stderr
 
 
-def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
+def one_iter_wrapper(procnum, inner_pso_obj, return_dict, *args):
     stdout_capture = StringIO()
     stderr_capture = StringIO()
     
@@ -92,7 +96,7 @@ def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
     sys.stdout = stdout_capture
     sys.stderr = stderr_capture
     
-    results = inner_pso_obj.run_learner_once(*args)
+    results = inner_pso_obj.run_inner_loop_once(*args)
     return_dict[procnum] = {
             'results': results,
             'stdout': stdout_capture.getvalue(),
@@ -101,7 +105,7 @@ def learner_wrapper(procnum, inner_pso_obj, return_dict, *args):
     
     sys.stdout = old_stdout
     sys.stderr = old_stderr
-    
+##### 
 
 class PSO():
     r"""
@@ -208,8 +212,10 @@ class PSO():
         Current iteration number.
 
     """
-    def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter,
-                 w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, early_termination=False, verbose=False):
+    def __init__(self, exec_trace_addr, configs_dir, output_dir, pop, max_iter, inner_loop_configs,
+                 w=0.8, c1=1.49, c2=1.49, auto_coeffs=True, skip_inner_loop=False, 
+                 skip_event_sel_opt=False, skip_learner_opt=False, 
+                 early_termination=False, verbose=False):
         
         self.exec_trace_addr = exec_trace_addr
         self.configs_dir = configs_dir
@@ -235,14 +241,22 @@ class PSO():
             
         # ... for InnerPSO instances
         self.all_props = self.onetime_props + self.continuous_props
-        inner_pso_pop      = 5 #15
-        inner_pso_max_iter = 8 #20 #10
+        inner_pso_pop      = int(inner_loop_configs["INNER_POP"])
+        inner_pso_max_iter = int(inner_loop_configs["INNER_MAX_ITER"])
+        
         # create an array of InnerPSO instances (one per particle)
         self.inner_psos = np.array(
-            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter, early_termination=True) for _ in range(pop)],
+            [InnerPSO(self.all_props, self.key_prop, inner_pso_pop, inner_pso_max_iter,
+                      inner_loop_configs["USE_KEY_EVENT"] == "true",
+                      skip_event_sel_opt=skip_event_sel_opt, 
+                      skip_learner_opt=skip_learner_opt, early_termination=True) for _ in range(pop)],
             dtype=object
         )
-        self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object)
+        # The same as x_inner defined later but in a different format, used for initiating
+        # the inner loop with the best parameters found in the previous outer loop iteration
+        # for each particle. Format is CompositeDecisionVar instead of (events_chosen, learner_args_chosen).
+        # It's flawed, though; it uses the previous iteration's best instead of the overall best
+        self.inner_loop_gbest_x_init = np.array([None] * pop, dtype=object) 
         self.skip_inner_loop = skip_inner_loop
         # ...
         
@@ -263,12 +277,18 @@ class PSO():
 
         self.lb, self.ub = self.X[0].lb, self.X[0].ub
         assert self.n_dim == len(self.lb) == len(self.ub), 'dim == len(lb) == len(ub) is not True'
-        assert np.all(self.ub > self.lb), 'upper-bound must be greater than lower-bound'
+        assert np.all(self.ub >= self.lb), 'upper-bound must be greater than or equal to lower-bound'
 
         v_high = self.ub - self.lb
         self.V = np.random.uniform(low=-v_high, high=v_high, size=(self.pop, self.n_dim))  # speed of particles
+        self.prev_out_of_bound_learner = [np.array([False] * self.n_dim) for _ in range(self.pop)]  # for handling boundary conditions in learner decision variables
         self.Y = np.array([0] * pop)
-        self.pbest_x = self.X.copy()                             # personal best location of every particle in history
+        
+        self.x_inner = np.array([(None, None)] * pop)        # best inner x for current outer iteration in the form of (events_chosen, learner_args_chosen) for each particle
+        self.pbest_x_inner = np.array([(None, None)] * pop)  # best personal best inner x among all outer iterations so far in the form of (events_chosen, learner_args_chosen) for each particle
+        self.gbest_x_inner = (None, None)                    # global best inner x EVER SEEN SO FAR ANYWHERE in the form of (events_chosen, learner_args_chosen)
+        
+        self.pbest_x = np.array([copy.deepcopy(self.X[i]) for i in range(self.pop)])
         self.pbest_y = np.array([np.inf] * pop)                  # best image of every particle in history
         self.gbest_x = CompositeDecisionVarMean(self.pbest_x)    # global best location for all particles
         self.gbest_y = np.inf                                    # global best y for all particles
@@ -285,22 +305,44 @@ class PSO():
         # support conditional variables: if kernel in the next iter is not rbf, rbf_gamma should not change
         self.gamma_indices = list(range(3, self.n_dim, 4))
         self.V_prev_gamma = np.copy(self.V[:, self.gamma_indices])
+        
+        ## Initialize rbf_gamma-related velocity columns in log-space so they remain positive-scaled.
+        ## It doesn't work very well but it's better than nothing
+        # print("V: ", self.V, '\n\n')
+        eps = 1e-4  # to avoid log(0)
+        v_rbf_gamma = np.exp(
+            np.random.uniform(
+                np.log(eps),
+                np.log(v_high[self.gamma_indices]),
+                size=(self.pop, len(self.gamma_indices)),
+            )
+        )
+        signs = np.random.choice([-1, 1], size=(self.pop, len(self.gamma_indices)))
+        # print(v_rbf_gamma, '\n\n')
+        self.V[:, self.gamma_indices] = signs * v_rbf_gamma  # shift back to original scale
+        # print("V after log-space init for rbf_gamma: ", self.V, '\n\n')
+        # exit(1)
+        
+        # self.executor = ProcessPoolExecutor(max_workers=self.pop)
 
+    # def __del__(self):
+    #     self.executor.shutdown(wait=True)
+        
     def update_coeffs(self):
         if self.auto_coeffs:
             t = self.iter_num
             n = self.max_iter
-            self.w = (0.4/n**2) * (t - n) ** 2 + 0.4
-            self.cp = -3 * t / n + 3.5
-            self.cg =  3 * t / n + 0.5
+            self.w = (0.5/n**2) * (t - n) ** 2 + 0.4
+            self.cp = -2 * t / n + 2.5
+            self.cg =  2 * t / n + 0.5
             
     def run_one_time_job(self):
         job_out_file_dir = str(os.path.join(self.save_dir, ''))
         os.makedirs(job_out_file_dir, exist_ok=True)
         
-        cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './onetime_job.sh']
+        cmd = ["bash", "./submit.sh",  job_out_file_dir, './onetime_job_base.sh', './runtime_scripts/onetime_job.sh']
         subprocess.run(cmd)         # waits for the job to be submitted
-        cmd = ["sbatch", "./onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
+        cmd = ["sbatch", "./runtime_scripts/onetime_job.sh", str(self.exec_trace_addr), str(self.configs_dir)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) 
         self.onetime_process = proc
             
@@ -309,19 +351,13 @@ class PSO():
         self.onetime_job_id = int(job_id)
         self.onetime_job_out_file = os.path.join(job_out_file_dir, f"job_{self.onetime_job_id}.out")
         print("Submitting one-time job", job_id, "for discrete variables.")
-            
-        # while True:
-        #     stdout = proc.stdout.readline()
-        #     if stdout.strip().startswith("Submitted batch job"):
-        #         job_id = stdout.strip().split()[-1]
-        #         job_ids_per_var.append(int(job_id))
-        #         print("Submitting job", job_id, "with args: ", ' '.join(args))
-        #         break
-        # ...  
         # Job will be done when we call self.onetime_process.wait() in call_scripts()
         
     # position and velocity are handelled for 1) rbf_gamma when kernel is not rbf, and 2) discrete variable kernel
     def update_V(self):
+        for i in range(self.pop):
+            self.V[i][self.prev_out_of_bound_learner[i]] = 0
+        
         r1 = np.random.rand(self.pop, self.n_dim)
         r2 = np.random.rand(self.pop, self.n_dim)
         intrm1 = np.array([self.pbest_x[i].to_array() - self.X[i].to_array() for i in range(self.pop)])
@@ -344,7 +380,9 @@ class PSO():
                     self.V[i, self.gamma_indices[j]] = self.V_prev_gamma[i, j]
                 
         self.X = np.array([CompositeDecisionVar.from_array(X_tmp_arr[i]) for i in range(self.pop)])
-                
+        for i in range(self.pop):
+            self.prev_out_of_bound_learner[i] = self.X[i].handle_boundary_pBest_dim(self.pbest_x[i].to_array())
+               
     # Use subprocess to run the job script and get the results
     def call_scripts(self):
         """
@@ -359,31 +397,42 @@ class PSO():
         processes = []
         
         for idx, x in enumerate(self.X):
-            x = copy.copy(x)
+            x = copy.deepcopy(x)
             decision_vars = x.decision_vars
             job_ids_per_var = []            
             processes_per_var = []
             
             for ith_var, decisoin_var in enumerate(decision_vars):
                 decisoin_var.rbf_gamma = float(decisoin_var.rbf_gamma) if decisoin_var.kernel == KernelType.RBF else 0.0
+                ## example of manual args: ['min_size=100', 'penalty=500', 'kernel=linear', 'rbf_gamma=0']
                 args = [f"{key}={value.name.lower() if isinstance(value, Enum) else int(value) if isinstance(value, float) and value.is_integer() else value}"
-                        for key, value in vars(decisoin_var).items()]
+                      for key, value in vars(decisoin_var).items()]
                 
-                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './discretization_job.sh']
+                #### examples of hard-coded values for the conveyor belt data
+                # current_prop = self.continuous_props[ith_var].lower()
+                # if current_prop == "count":
+                #     args = ['min_size=30', 'penalty=50', 'kernel=rbf', 'rbf_gamma=0.01']
+                # elif current_prop == "power":
+                #     args = ['min_size=5', 'penalty=10', 'kernel=rbf', 'rbf_gamma=10']
+                # elif current_prop == "velocity":
+                #     args = ['min_size=5', 'penalty=10', 'kernel=rbf', 'rbf_gamma=30']
+                    
+                cmd = ["bash", "./submit.sh",  job_out_file_dir, './discretization_job_base.sh', './runtime_scripts/discretization_job.sh']
                 subprocess.run(cmd)
                 
-                cmd = ["sbatch", "--parsable", "./discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
+                cmd = ["sbatch", "--parsable", "./runtime_scripts/discretization_job.sh", str(self.exec_trace_addr), str(os.path.join(self.configs_dir, f"optimizing_props_{ith_var}.prop"))] + args 
                 proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) # Async process
                 processes_per_var.append(proc)
                 
                 job_id = proc.stdout.strip()
                 job_ids_per_var.append(int(job_id))
-                print("Submitting job", job_id, "with args: ", ' '.join(args))
+                print("Submit job", job_id, ", args: ", ' '.join(args))
                 
             job_ids.append(job_ids_per_var)
             processes.append(processes_per_var)
+            time.sleep(np.random.randint(2) + 1) # add some random sleep to avoid submitting all jobs at the same time, which can be hard on Slurm
     
-        
+
         # Each particle submits multiple jobs (one per discrete variable)
         # Check if all jobs for a particle are finished
         # Then, call the inner loop to collect results for that particle
@@ -401,16 +450,16 @@ class PSO():
                         self.onetime_process.wait()
                         self.onetime_process = None
             
-                    cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './prepare_learner_input.sh']
+                    cmd = ["bash", "./submit.sh",  str(os.path.join(job_out_file_dir, f"particle_{idx}", "")), './prepare_learner_input_base.sh', './runtime_scripts/prepare_learner_input.sh']
                     subprocess.run(cmd)
                 
                     # All jobs in the particle are done, now call the inner loop
                     # Call an sbatch script to prepare the input to the learner (i.e., inner loop)
                     # Then call the inner loop 
-                    leaner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
-                    cmd = ["sbatch", "--quiet", "./prepare_learner_input.sh", leaner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
+                    learner_input_foldername = "event_traces_iter_{}_particle_{}".format(self.iter_num, idx)    
+                    cmd = ["sbatch", "--quiet", "./runtime_scripts/prepare_learner_input.sh", learner_input_foldername, "onetime"] + [str(jid) for jid in job_ids[idx]]
                     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # waits for the job to be submitted
-                    leaner_input_filename = leaner_input_foldername + ".zip"
+                    leaner_input_filename = learner_input_foldername + ".json.zst"
                     
                     if self.skip_inner_loop:
                         args = (
@@ -421,7 +470,8 @@ class PSO():
                             leaner_input_filename,
                             idx
                         )
-                        p = Process(target=learner_wrapper, args=args)
+                        # p = self.executor.submit(one_iter_wrapper, *args)
+                        p = Process(target=one_iter_wrapper, args=args)
                     else:
                         args = (
                             idx,
@@ -432,6 +482,7 @@ class PSO():
                             idx,
                             self.inner_loop_gbest_x_init[idx]
                         )
+                        # p = self.executor.submit(inner_loop_wrapper, *args)
                         p = Process(target=inner_loop_wrapper, args=args)
                     
                     p.start()
@@ -446,7 +497,7 @@ class PSO():
                     if all(p is None for p in processes[idx]):
                         processes[idx] = []
                                                        
-            time.sleep(5)
+            time.sleep(2)
         
         # Check for the inner loops of particles and collect their results
         pending_particles = list(range(self.pop))
@@ -454,28 +505,41 @@ class PSO():
 
         while pending_particles:
             for idx in pending_particles:
-                if not inner_loop_processes[idx].is_alive():
+                if not inner_loop_processes[idx].is_alive() or inner_loop_processes[idx].exitcode is not None: #crazily, is_alive() could return True even when the process is already finished, so we also check exitcode
+                # if not inner_loop_processes[idx].done():
+                    # exc = inner_loop_processes[idx].exception()
+                    # if exc is not None:
+                    #     print(f"Worker process for particle {idx} raised an exception: {exc}")
+                    #     traceback.print_exception(type(exc), exc, exc.__traceback__)
+                    #     pending_particles.remove(idx)
+                    #     continue
+                    
                     print("\n----- InnerPSO for particle", idx, "has finished. Logs:")
                     try:
                         print(return_dict[idx]['stdout'], end="")
                         if return_dict[idx]['stderr']:
                             print(f"STDERR: {return_dict[idx]['stderr']}", end="")
-                            
+                    except KeyError:
+                        print(f"Warning: Cannot print logs for inner loop job {idx}")
+                        
+                    try:
                         self.inner_psos[idx] = return_dict[idx]['results']
                         results[idx] = self.inner_psos[idx].best_y
                         self.inner_loop_gbest_x_init[idx] = self.inner_psos[idx].gbest_x
-                    except KeyError:
-                        print(f"Warning: No result for job {idx}")
-                    
+                    except Exception as e:
+                        print(f"Error retrieving results for particle {idx}: {e}")
+                        
                     # Clean up learner input files
                     cmd = ["bash", "./cleanup.sh",  str(self.iter_num), str(idx)]
                     subprocess.run(cmd)
                         
                     pending_particles.remove(idx)
-                    args_chosen = [self.all_props[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.arr[i] == 1] + [self.inner_psos[idx].learner_args[-1]]
-                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", args_chosen, "-----\n")
+                    events_chosen = [self.inner_psos[idx].event_sel_args[i] for i in range(len(self.all_props)-1) if self.inner_psos[idx].best_x.bin_decision_var.arr[i] == 1] + [self.inner_psos[idx].event_sel_args[-1]]
+                    learner_args_chosen = [val for val in self.inner_psos[idx].best_x.learner_decision_var.to_array(dtype=object)]
+                    self.x_inner[idx] = (events_chosen, learner_args_chosen)
+                    print("----- Results from particle", idx, " InnerPSO operation: inner_loop_iter", self.inner_psos[idx].iter_num, ", best score", self.inner_psos[idx].best_y, "at", events_chosen, " and ", learner_args_chosen, "-----\n")
                 
-            time.sleep(5)
+            time.sleep(2)
                     
         self.Y = np.array(results)  
         return self.Y
@@ -492,7 +556,11 @@ class PSO():
         '''
         self.need_update = self.pbest_y > self.Y
         # print("PSO update_pbest: ", self.need_update.shape, self.pbest_y.shape, self.Y.shape)
-        self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
+        # self.pbest_x = np.where(self.need_update, self.X, self.pbest_x)
+        for i in range(self.pop):
+            if self.need_update[i]:
+                self.pbest_x[i] = copy.deepcopy(self.X[i])
+                self.pbest_x_inner[i] = copy.deepcopy(self.x_inner[i])
         self.pbest_y = np.where(self.need_update, self.Y, self.pbest_y)
 
     def update_gbest(self):
@@ -500,10 +568,11 @@ class PSO():
         global best
         :return:
         '''
-        idx_min = self.pbest_y.argmin()
+        idx_min = self.pbest_y.argmin() # What if there are multiple particles with the same best fitness? We can just take the first one (argmin does that), but we should be aware of this when analyzing results.
         # print("PSO update_gbest: ", self.gbest_y, self.pbest_y.shape, self.pbest_y[idx_min])
         if self.gbest_y > self.pbest_y[idx_min]:
-            self.gbest_x = self.X[idx_min]
+            self.gbest_x_inner = copy.deepcopy(self.pbest_x_inner[idx_min])
+            self.gbest_x = copy.deepcopy(self.X[idx_min])
             self.gbest_y = self.pbest_y[idx_min]
 
     def recorder(self):
@@ -534,6 +603,7 @@ class PSO():
         self.Y_hist[iter_num] = self.Y.copy()
         self.X_hist[iter_num] = self.X.copy()
         
+        print("PSO iteration {} completed. Global best fitness: {}".format(iter_num, self.gbest_y))
         if self.early_termination:
             if self.analyze_convergence():
                 print(f"Converged at iteration {iter_num}. Stopping early.")
@@ -556,7 +626,9 @@ class PSO():
         try:
             gbest_converged = self.has_converged_gbest()
             pos_converged, vel_converged = self.has_converged_particles()
-            return gbest_converged and (pos_converged or vel_converged)
+            # was "and" before, but it's too strict, we can consider it converged if either gbest
+            # is stable or particles are coalescing/velocity collapsing
+            return gbest_converged or (pos_converged or vel_converged)
         
         except Exception as e:
             traceback.print_exc()

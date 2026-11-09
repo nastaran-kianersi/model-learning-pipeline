@@ -6,28 +6,241 @@ import operator
 
 
 class BinaryDecisionVar:
-    def __init__(self, n_dim):
+    def __init__(self, n_dim, mapping=None):
         self.n_dim = n_dim
+        self.mapping = mapping
         # self.arr = np.random.randint(0, 2, size=n_dim)  # Random binary values (0 or 1)
         self.arr = np.random.choice([0, 1], size=n_dim)
     
     @staticmethod
-    def random(n_dim):
-        return BinaryDecisionVar(n_dim)
+    def random(n_dim, mapping=None):
+        return BinaryDecisionVar(n_dim, mapping=mapping)
     
     @classmethod
-    def from_array(cls, arr):
-        instance = cls(len(arr))
-        instance.arr = arr
+    def from_array(cls, arr, mapping=None):
+        instance = cls(len(arr), mapping=mapping)
+        instance.arr = np.array(arr, copy=True)   # might be invalid! but we don't care
+        instance.mapping = mapping
         return instance
     
     def __repr__(self):
-        return f"BinaryDecisionVar(arr={self.arr})"
+        if self.mapping is not None:
+            active_indices = np.where(self.arr == 1)[0]
+            active_events = [self.mapping[i] for i in active_indices]
+            return f"BinaryDecisionVar(arr={self.arr}, active_events={active_events})"
+        else:
+            return f"BinaryDecisionVar(arr={self.arr})"
+    
+    def __eq__(self, other):
+        """Overrides the default implementation"""
+        if isinstance(other, BinaryDecisionVar):
+            return np.array_equal(self.arr, other.arr)
+        return False
     
     
+class LearnerDecisionVar:
+    n_dim = 5
+    lb = np.array([0, 0, 0, 0, 0]) # Interpret 0 as infinity (Null) in the learner script
+    ub = np.array([1, 1, 1, 1, 10]) # np.iinfo(np.int64).max
+    # b_trunc = int(np.trunc(b)), b_ceil = int(np.ceil(b))
+    
+    @staticmethod
+    def random():
+        timing_eps = np.random.uniform(LearnerDecisionVar.lb[0], LearnerDecisionVar.ub[0])
+        timing_eps_decay = np.random.uniform(LearnerDecisionVar.lb[1], LearnerDecisionVar.ub[1])
+        freq_eps = np.random.uniform(LearnerDecisionVar.lb[2], LearnerDecisionVar.ub[2])
+        freq_eps_decay = np.random.uniform(LearnerDecisionVar.lb[3], LearnerDecisionVar.ub[3])
+        tail_length = np.random.randint(LearnerDecisionVar.lb[4], LearnerDecisionVar.ub[4])
+        return LearnerDecisionVar(timing_eps, timing_eps_decay, freq_eps, freq_eps_decay, tail_length)
+    
+    def __init__(
+        self,
+        timing_eps: float,
+        timing_eps_decay: float,
+        freq_eps: float,
+        freq_eps_decay: float,
+        tail_length: int,
+    ):
+        self.timing_eps = timing_eps
+        self.timing_eps_decay = timing_eps_decay
+        self.freq_eps = freq_eps
+        self.freq_eps_decay = freq_eps_decay
+        self.tail_length = tail_length
+        # self.clip()  # Ensure values are within bounds
+        
+    @classmethod
+    def from_array(cls, arr):
+        """Initialize LearnerDecisionVar from a numpy array."""
+        if len(arr) != LearnerDecisionVar.n_dim:
+            raise ValueError(f"Array must have {LearnerDecisionVar.n_dim} elements.")
+        
+        return cls(
+            timing_eps=float(arr[0]),
+            timing_eps_decay=float(arr[1]),
+            freq_eps=float(arr[2]),
+            freq_eps_decay=float(arr[3]),
+            tail_length=int(arr[4])
+        )
+        
+    def __repr__(self):
+        return (f"LearnerDecisionVar(timing_eps={self.timing_eps:.3f}, timing_eps_decay={self.timing_eps_decay:.3f}, "
+                f"freq_eps={self.freq_eps:.3f}, freq_eps_decay={self.freq_eps_decay:.3f}, tail_length={self.tail_length})")
+        
+    # The definition of __add__ and __sub__ directly determines the
+    # way boundary conditions are handled: use the + operator for
+    # clamping to bounds, and use other addition functions for other
+    # bounary handling methods (e.g., wrapping around)
+    # ====> ORRRR since I removed self.clip() in __init__, I can just
+    #        use + and - operators for normal arithmetic, and handle
+    #        boundary conditions separately
+    ######
+    def __add__(self, other):
+        if not isinstance(other, LearnerDecisionVar):
+            return NotImplemented
+        
+        arr_sum = self.to_array() + other.to_array()
+            
+        result = LearnerDecisionVar(
+            timing_eps=float(arr_sum[0]),
+            timing_eps_decay=float(arr_sum[1]),
+            freq_eps=float(arr_sum[2]),
+            freq_eps_decay=float(arr_sum[3]),
+            tail_length=int(arr_sum[4])
+        )
+        return result
+
+    def __sub__(self, other):
+        if not isinstance(other, LearnerDecisionVar):
+            return NotImplemented
+        
+        arr_diff = self.to_array() - other.to_array()
+        
+        result = LearnerDecisionVar(
+            timing_eps=float(arr_diff[0]),
+            timing_eps_decay=float(arr_diff[1]),
+            freq_eps=float(arr_diff[2]),
+            freq_eps_decay=float(arr_diff[3]),
+            tail_length=int(arr_diff[4])
+        )
+        return result
+    ######
+    
+    def __eq__(self, other):
+        """Overrides the default implementation"""
+        if isinstance(other, LearnerDecisionVar):
+            return self.timing_eps == other.timing_eps and \
+                   self.timing_eps_decay == other.timing_eps_decay and \
+                   self.freq_eps == other.freq_eps and \
+                   self.freq_eps_decay == other.freq_eps_decay and \
+                   self.tail_length == other.tail_length
+        return False
+
+    # Instead of __array__; to avoid implicit conversion to numpy array
+    def to_array(self, dtype=None):
+        vals = [
+            self.timing_eps,
+            self.timing_eps_decay,
+            self.freq_eps,
+            self.freq_eps_decay,
+            self.tail_length
+        ]
+        return np.array(vals, dtype=dtype)
+    
+    def clip(self):
+        """Clip the values of the DecisionVar instance to its bounds."""
+        self.timing_eps = np.clip(self.timing_eps, LearnerDecisionVar.lb[0], LearnerDecisionVar.ub[0])
+        self.timing_eps_decay = np.clip(self.timing_eps_decay, LearnerDecisionVar.lb[1], LearnerDecisionVar.ub[1])
+        self.freq_eps = np.clip(self.freq_eps, LearnerDecisionVar.lb[2], LearnerDecisionVar.ub[2])
+        self.freq_eps_decay = np.clip(self.freq_eps_decay, LearnerDecisionVar.lb[3], LearnerDecisionVar.ub[3])
+        self.tail_length = int(np.clip(self.tail_length, LearnerDecisionVar.lb[4], LearnerDecisionVar.ub[4]))
+
+    def find_out_of_bound_dims(self):
+        # Return an array of 0/1 flags indicating which fields are out of bound
+        orig_vals = self.to_array(dtype=object)
+        clipped_vals = np.array([
+            np.clip(self.timing_eps, LearnerDecisionVar.lb[0], LearnerDecisionVar.ub[0]),
+            np.clip(self.timing_eps_decay, LearnerDecisionVar.lb[1], LearnerDecisionVar.ub[1]),
+            np.clip(self.freq_eps, LearnerDecisionVar.lb[2], LearnerDecisionVar.ub[2]),
+            np.clip(self.freq_eps_decay, LearnerDecisionVar.lb[3], LearnerDecisionVar.ub[3]),
+            int(np.clip(self.tail_length, LearnerDecisionVar.lb[4], LearnerDecisionVar.ub[4]))
+        ], dtype=object)
+
+        # 1 if original value differed from clipped value (i.e., out of bound), else 0
+        out_of_bound = (orig_vals != clipped_vals).astype(bool)
+        return out_of_bound
+
+    def handle_boundary_pBest_dim(self, pbest_arr):
+        # Get boolean mask of out-of-bound dimensions
+        out_of_bound = self.find_out_of_bound_dims()
+
+        # Convert pbest_arr to a numeric array if needed
+        if isinstance(pbest_arr, LearnerDecisionVar):
+            pbest_vals = pbest_arr.to_array(dtype=object)
+        else:
+            pbest_vals = np.asarray(pbest_arr, dtype=object)
+
+        if pbest_vals.size != LearnerDecisionVar.n_dim:
+            raise ValueError(f"pbest_arr must have {LearnerDecisionVar.n_dim} elements")
+            
+        # Use vectorized replace via to_array/from_array
+        self_vals = self.to_array()
+        self_vals[out_of_bound] = pbest_vals[out_of_bound]
+
+        new = LearnerDecisionVar.from_array(self_vals)
+    
+        # Assign all fields from the reconstructed instance
+        # print("before applying pbest handling: ", self)
+        self.timing_eps = new.timing_eps
+        self.timing_eps_decay = new.timing_eps_decay
+        self.freq_eps = new.freq_eps
+        self.freq_eps_decay = new.freq_eps_decay
+        self.tail_length = new.tail_length
+        # print("after applying pbest handling: ", self)
+        return out_of_bound
+    
+
+class InnerLoopDecisionVar:
+    @staticmethod
+    def random(bin_n_dim, bin_mapping=None):
+        bin_decision_var = BinaryDecisionVar.random(bin_n_dim, mapping=bin_mapping)
+        learner_decision_var = LearnerDecisionVar.random()
+        return InnerLoopDecisionVar(bin_decision_var, learner_decision_var)
+    
+    def __init__(self, bin_decision_var: BinaryDecisionVar, learner_decision_var: LearnerDecisionVar):
+        self.bin_decision_var = bin_decision_var
+        self.learner_decision_var = learner_decision_var
+        
+    def __repr__(self):
+        return (f"InnerLoopDecisionVar(\n  bin_decision_var={self.bin_decision_var},\n"
+                f"  learner_decision_var={self.learner_decision_var}\n)")
+        
+    @classmethod
+    def from_array(cls, bin_arr, learner_arr, bin_mapping=None):
+        bin_decision_var = BinaryDecisionVar.from_array(bin_arr, mapping=bin_mapping)
+        learner_decision_var = LearnerDecisionVar.from_array(learner_arr)
+        return cls(bin_decision_var, learner_decision_var)
+    
+    def __eq__(self, other):
+        """Overrides the default implementation"""
+        if isinstance(other, InnerLoopDecisionVar):
+            return self.bin_decision_var == other.bin_decision_var and \
+                   self.learner_decision_var == other.learner_decision_var
+        return False
+    
+    def to_array(self, dtype=None):
+        bin_array = self.bin_decision_var.arr
+        learner_array = self.learner_decision_var.to_array(dtype=dtype)
+        return (bin_array, learner_array) # np.concatenate((bin_array, learner_array))
+        
+    def handle_boundary_pBest_dim(self, pbest_learner_arr):
+        return self.learner_decision_var.handle_boundary_pBest_dim(pbest_learner_arr)
+        
+        
+######   ######   ######   ######  ######   ######   ######
+
 class KernelType(Enum):
     LINEAR = 0
-    RBF = 1
+    RBF = 1       # comment out the other two and change RBF to 0
     COSINE = 2
 
     # Makes sense for only two operands; can't be used to sum up more than
@@ -72,8 +285,10 @@ Methods/vars to be implemented:
 """
 class DecisionVar:
     n_dim = 4
-    lb = np.array([100, 10.0, 0, 0.05])
-    ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
+    # lb = np.array([100, 10.0, 0, 0.05])
+    # ub = np.array([1000, 500.0, len(KernelType) - 1, 10.0])
+    lb = np.array([5, 5.0, 0, 0.0001])
+    ub = np.array([5000, 1000.0, len(KernelType) - 1, 100.0])
         
     # in update_X and update_V, handle rbf_gamma when kernel is not rbf,
     # in here, handle discrete arithmetic
@@ -82,7 +297,8 @@ class DecisionVar:
         min_size = np.random.randint(DecisionVar.lb[0], DecisionVar.ub[0])
         penalty = np.random.uniform(DecisionVar.lb[1], DecisionVar.ub[1])
         kernel = np.random.choice(list(KernelType))
-        rbf_gamma = np.random.uniform(DecisionVar.lb[3], DecisionVar.ub[3])
+        ## Using a log-uniform distribution for rbf_gamma to cover different orders of magnitude more effectively
+        rbf_gamma = np.exp(np.random.uniform(np.log(DecisionVar.lb[3]), np.log(DecisionVar.ub[3])))
         return DecisionVar(min_size, penalty, kernel, rbf_gamma)
     
     def __init__(
@@ -96,7 +312,7 @@ class DecisionVar:
         self.penalty = penalty
         self.kernel = kernel
         self.rbf_gamma = rbf_gamma
-        self.clip()  # Ensure values are within bounds
+        # self.clip()               # might be invalid! but we don't care
         
     @classmethod
     def from_array(cls, arr):
@@ -174,6 +390,47 @@ class DecisionVar:
         self.kernel = KernelType(int(np.clip(self.kernel.value, DecisionVar.lb[2], DecisionVar.ub[2])))
         self.rbf_gamma = np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
     
+    def find_out_of_bound_dims(self):
+        # Return an array of 0/1 flags indicating which fields are out of bound
+        orig_vals = self.to_array(dtype=object)
+        clipped_vals = np.array([
+            np.clip(self.min_size, DecisionVar.lb[0], DecisionVar.ub[0]),
+            np.clip(self.penalty, DecisionVar.lb[1], DecisionVar.ub[1]),
+            np.clip(self.kernel.value, DecisionVar.lb[2], DecisionVar.ub[2]),
+            np.clip(self.rbf_gamma, DecisionVar.lb[3], DecisionVar.ub[3])
+        ], dtype=object)
+
+        # 1 if original value differed from clipped value (i.e., out of bound), else 0
+        out_of_bound = (orig_vals != clipped_vals).astype(bool)
+        return out_of_bound
+
+    def handle_boundary_pBest_dim(self, pbest_arr):
+        # Get boolean mask of out-of-bound dimensions
+        out_of_bound = self.find_out_of_bound_dims()
+
+        # Convert pbest_arr to a numeric array if needed
+        if isinstance(pbest_arr, DecisionVar):
+            pbest_vals = pbest_arr.to_array(dtype=object)
+        else:
+            pbest_vals = np.asarray(pbest_arr, dtype=object)
+
+        if pbest_vals.size != DecisionVar.n_dim:
+            raise ValueError(f"pbest_arr must have {DecisionVar.n_dim} elements")
+            
+        # Use vectorized replace via to_array/from_array
+        self_vals = self.to_array()
+        self_vals[out_of_bound] = pbest_vals[out_of_bound]
+
+        new = DecisionVar.from_array(self_vals)
+    
+        # Assign all fields from the reconstructed instance
+        # print("before applying pbest handling: ", self)
+        self.min_size = new.min_size
+        self.penalty = new.penalty
+        self.kernel = new.kernel
+        self.rbf_gamma = new.rbf_gamma
+        # print("after applying pbest handling: ", self)
+        return out_of_bound
 
 # Wrapper around multiple DecisionVar instances
 class CompositeDecisionVar:
@@ -264,7 +521,14 @@ class CompositeDecisionVar:
         for var in self.decision_vars:
             var.clip()
     
-    
+    def handle_boundary_pBest_dim(self, pbest_learner_arr):
+        out_of_bound_flags = []
+        for idx, var in enumerate(self.decision_vars):
+            out_of_bound_flags.append(var.handle_boundary_pBest_dim(pbest_learner_arr[idx * self.n_dim_per_var:(idx + 1) * self.n_dim_per_var]))
+            self.decision_vars[idx] = var
+
+        return np.concatenate([np.asarray(flags, dtype=bool).ravel() for flags in out_of_bound_flags]).astype(bool)
+
 # =========================
 # Helper functions
 # =========================

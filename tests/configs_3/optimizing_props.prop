@@ -1,0 +1,3 @@
+#PLANT_INFO_SimulationTime, continuous
+PLANT_INFO_CurrentVC, continuous
+PLANT_INFO_CurrentIL, continuous

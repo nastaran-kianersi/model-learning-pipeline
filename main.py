@@ -3,7 +3,8 @@ from Algorithms.InnerPSO import InnerPSO
 import os
 from argparse import ArgumentParser
 from pathlib import Path
-from Algorithms.DecisionVar import Test_DecisionVarArithmetic as dv_test
+from Algorithms.DecisionVar import *
+from dotenv import dotenv_values
 
 
 parser = ArgumentParser(description="Process Nibe data in nfer format to create time series and generate event traces.")
@@ -43,17 +44,32 @@ print(f"Output directory: {output_dir}\n\n")
 # inner_psos.optimize_distributed('./', "event_traces.zip")
 ## -------------------------
 
+
+cfg = dotenv_values("configs.env")
+
 # exec_trace_addr is the input directory
 # output_dir is the output directory
 # jobscript_addr is the job script address, can have a different path but read from pwd for now
 # (of course it will have some effect on the exec time cause the file has to be loaded onto memmory)
 pso = PSO(exec_trace_addr=exec_trace_addr, configs_dir=configs_dir, output_dir=output_dir,
-          pop=32, max_iter=20, w=0.8, c1=1, c2=1, auto_coeffs=True, skip_inner_loop=False, early_termination=True) #pop=128, max_iter=100   # pop=30, max_iter=30
+          pop=int(cfg["OUTER_POP"]), max_iter=int(cfg["OUTER_MAX_ITER"]),
+          inner_loop_configs=cfg,
+          auto_coeffs=True, early_termination=True,
+          skip_inner_loop=cfg["SKIP_INNER_LOOP"] == "true",
+          skip_event_sel_opt=cfg["SKIP_EVENT_SEL_OPT"] == "true", 
+          skip_learner_opt=cfg["SKIP_LEARNER_OPT"] == "true")
+
 best_x, best_y = pso.optimize_distributed()
 pso.analyze_convergence()
-print("Best solution:", best_x)
+print("** Best solution: **")
 print("Best objective value:", best_y)
+print("-- Outer loop best_x:", best_x)
+print("-- Inner loop best_x:")
+print("Learner Params:") 
+print(pso.gbest_x_inner[1])
+print("Chosen events:")
+print(pso.gbest_x_inner[0]) 
 
 # pso.visualize()
-pso.run_for_xbest()
+pso.run_for_xbest() # YOU REALLY WANT TO RUN THIS
 

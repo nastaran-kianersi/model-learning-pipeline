@@ -1,8 +1,8 @@
 ##SBATCH --output=/dev/null
-##SBATCH --error=/dev/null
+#SBATCH --error=/dev/null
 #SBATCH -c 1
-#SBATCH --mem=50
-#SBATCH -t 0-00:10:00
+#SBATCH --mem=100M
+#SBATCH -t 0-00:15:00
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --wait
@@ -28,11 +28,25 @@ SCRATCH_DIR="/global/scratch/hpc5649"
 TrainEventTracePath="$SCRATCH_DIR/train_$EventTraceFoldername"
 TestEventTracePath="$SCRATCH_DIR/test_$EventTraceFoldername"
 
+for i in "$@"; do
+    for prefix in "train" "test"; do
+        dir="$SCRATCH_DIR/${prefix}_event_traces_${i}"
+        # Discover the split directory name dynamically
+        if [[ -d "$dir" ]]; then
+            SplitDirName=$(ls -d "$dir"/*/ 2>/dev/null | head -1 | xargs basename)
+            break
+        else
+            echo "Directory $dir does not exist. Exiting."
+            # exit 1
+        fi
+    done
+done
+
 # Create the unified directory
-mkdir -p "$TrainEventTracePath/split_with_same_suffix/continuous" 
-mkdir -p "$TrainEventTracePath/split_with_same_suffix/discrete"
-mkdir -p "$TestEventTracePath/split_with_same_suffix/continuous" 
-mkdir -p "$TestEventTracePath/split_with_same_suffix/discrete"
+mkdir -p "$TrainEventTracePath/$SplitDirName/continuous" 
+mkdir -p "$TrainEventTracePath/$SplitDirName/discrete"
+mkdir -p "$TestEventTracePath/$SplitDirName/continuous" 
+mkdir -p "$TestEventTracePath/$SplitDirName/discrete"
 
 train_exists=true
 test_exists=true
@@ -61,11 +75,11 @@ for i in "$@"; do
         fi
 
         # Copy continuous vars
-        if [[ -d "$dir/split_with_same_suffix/continuous" ]]; then
-            cp -r "$dir/split_with_same_suffix/continuous/"* "$DestPath"/split_with_same_suffix/continuous/ 2>/dev/null
+        if [[ -d "$dir/$SplitDirName/continuous" ]]; then
+            cp -r "$dir/$SplitDirName/continuous/"* "$DestPath"/$SplitDirName/continuous/ 2>/dev/null
             echo "Cleaning up directory ${dir} for job ID ${i} ..."
-            chmod -R u+r "$dir"
-            chmod -R u+w "$dir"
+            # chmod -R u+r "$dir"
+            # chmod -R u+w "$dir"
             rm -rf "$dir"
             # source ./cleanup_scratch.sh "${prefix}_event_traces_${i}"
 
@@ -79,8 +93,8 @@ for i in "$@"; do
         fi
 
         # Copy discrete vars
-        if [[ -d "$dir/split_with_same_suffix/discrete" ]]; then
-            cp -r "$dir/split_with_same_suffix/discrete/"* "$DestPath"/split_with_same_suffix/discrete/ 2>/dev/null
+        if [[ -d "$dir/$SplitDirName/discrete" ]]; then
+            cp -r "$dir/$SplitDirName/discrete/"* "$DestPath"/$SplitDirName/discrete/ 2>/dev/null
         fi
     done
 done
@@ -112,3 +126,24 @@ rm -rf "$TestEventTracePath"
 #    echo "Cleaning up directory ${dir} for suffix ${i} ..."
 #    rm -rf "$dir"
 # done
+
+# Automata Learning
+module load java/21.0.1
+exec_path=/global/home/hpc5649/hpm_automata_learning/heat-pump-mining-v4/build/distributions/heat-pump-mining-0.0.0-93-de0c128-SNAPSHOT/bin/heat-pump-mining
+# exec_path=/global/home/hpc5649/hpm_automata_learning/heat-pump-mining-v3/build/distributions/heat-pump-mining-0.0.0-68-06d845e-SNAPSHOT/bin/heat-pump-mining
+
+if [ "$train_exists" = true ]; then
+    echo "Starting convert-format for train..."
+    $exec_path convert-format -i "$(basename "$TrainEventTracePath").zip" -o "$(basename "$TrainEventTracePath").json.zst"
+    rm "$(basename "$TrainEventTracePath").zip"
+else
+    echo "No train event traces to convert to .json.zst."
+fi
+
+if [ "$test_exists" = true ]; then
+    echo "Starting convert-format for test..."
+    $exec_path convert-format -i "$(basename "$TestEventTracePath").zip" -o "$(basename "$TestEventTracePath").json.zst"
+    rm "$(basename "$TestEventTracePath").zip"
+else
+    echo "No test event traces to convert to .json.zst."
+fi

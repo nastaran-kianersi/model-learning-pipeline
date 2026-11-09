@@ -91,7 +91,8 @@ def is_job_completed_sacct(job_id):
             return False  # No exact match found yet in sacct output
 
         # Common end states for finished jobs
-        completed_states = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"}
+        completed_states = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "BOOT_FAIL",
+                            "OUT_OF_MEMORY", "DEADLINE"}
 
         # if main_job_state in completed_states:
         #     print(f"Job {job_id} state from sacct: {main_job_state}")
@@ -99,6 +100,7 @@ def is_job_completed_sacct(job_id):
 
     except subprocess.CalledProcessError as e:
         print(f"Error checking job status with sacct: {e}")
+        print(f"stderr: {e.stderr}")
         return False
    
     
